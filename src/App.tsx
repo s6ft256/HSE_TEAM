@@ -1,4 +1,6 @@
+import React, { useEffect, useState } from "react";
 import { getFirestore, collection, getDocs } from "firebase/firestore";
+import { initializeApp } from "firebase/app";
 import { useState, useEffect, FormEvent } from 'react';
 import { 
   Users, 
@@ -105,7 +107,7 @@ export default function App() {
       .then(data => setFirebaseStatus(data))
       .catch(err => console.error('Health check failed:', err));
 
-    import { getFirestore, collection, getDocs } from "firebase/firestore";
+   
 
 const db = getFirestore();
 
