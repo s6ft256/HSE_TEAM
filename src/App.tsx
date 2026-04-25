@@ -104,7 +104,25 @@ export default function App() {
       .then(data => setFirebaseStatus(data))
       .catch(err => console.error('Health check failed:', err));
 
-    fetch('/api/projects')
+    import { getFirestore, collection, getDocs } from "firebase/firestore";
+
+const db = getFirestore();
+
+async function loadProjects() {
+  try {
+    const snapshot = await getDocs(collection(db, "projects"));
+    const data = snapshot.docs.map(doc => doc.data());
+
+    setProjects(data);
+    setError(null);
+  } catch (err) {
+    console.error(err);
+    setError(err.message);
+    setProjects([]);
+  }
+}
+
+loadProjects();
       .then(res => res.json())
       .then(data => {
         if (data.error) {
@@ -119,7 +137,7 @@ export default function App() {
       })
       .catch(err => {
         console.error('Projects fetch error:', err);
-        setError('Connection failed. Please check your Supabase secrets.');
+        setError('Connection failed. Please check your firestore secrets.');
       });
     
     fetch('/api/stats')
@@ -731,7 +749,7 @@ export default function App() {
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
                       role: "HSSE Manager",
-                      dept: "Operations",
+                      dept: "HSE Department",
                       project: "Trojan HQ",
                       email: "ahmed.abbas@trojanholding.com",
                       img: "https://media.licdn.com/dms/image/v2/C4D03AQG_2PVLqp894g/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1655174534836?e=1778716800&v=beta&t=CI5DMnpbVpj8ED7tFmYiPttn4-bAx-m_i1t-ymsP2Ds",
