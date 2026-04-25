@@ -31,8 +31,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const { url } = req;
+  const path = url?.split('?')[0];
   
-  if (!db && url?.startsWith('/api') && url !== '/api/health') {
+  if (!db && path?.startsWith('/api') && path !== '/api/health') {
     return res.status(200).json({ 
       error: 'Firebase is not initialized. Check your configuration.' 
     });
@@ -40,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // Health check
-    if (url === '/api/health' || url === '/api/health/') {
+    if (path === '/api/health' || path === '/api/health/') {
       let tableInfo = { count: 0, sampleColumns: [] as string[], error: null as any };
       
       if (db) {
@@ -68,7 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Projects endpoint
-    if (url === '/api/projects' || url === '/api/projects/') {
+    if (path === '/api/projects' || path === '/api/projects/') {
       if (!db) throw new Error('DB not initialized');
       const snapshot = await getDocs(collection(db, 'hse_employees'));
       const projects = [...new Set(snapshot.docs.map(doc => doc.data().project))].filter(Boolean);
@@ -76,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Line managers endpoint
-    if (url === '/api/line-managers' || url === '/api/line-managers/') {
+    if (path === '/api/line-managers' || path === '/api/line-managers/') {
       if (!db) throw new Error('DB not initialized');
       const project = req.query.project as string;
       const q = query(collection(db, 'hse_employees'), where('project', '==', project));
@@ -87,7 +88,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Area managers endpoint
-    if (url === '/api/area-managers' || url === '/api/area-managers/') {
+    if (path === '/api/area-managers' || path === '/api/area-managers/') {
       if (!db) throw new Error('DB not initialized');
       const lineManager = req.query.line_manager as string;
       const q = query(collection(db, 'hse_employees'), where('line_manager', '==', lineManager));
@@ -98,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Employees endpoint
-    if (url === '/api/employees' || url === '/api/employees/') {
+    if (path === '/api/employees' || path === '/api/employees/') {
       if (!db) throw new Error('DB not initialized');
       const areaManager = req.query.area_manager as string;
       const q = query(collection(db, 'hse_employees'), where('area_manager', '==', areaManager));
@@ -109,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Search endpoint
-    if (url === '/api/search' || url === '/api/search/') {
+    if (path === '/api/search' || path === '/api/search/') {
       if (!db) throw new Error('DB not initialized');
       const queryTerm = req.query.q as string;
       if (!queryTerm) return res.json([]);
@@ -132,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Create employee endpoint
-    if ((url === '/api/employees' || url === '/api/employees/') && req.method === 'POST') {
+    if ((path === '/api/employees' || path === '/api/employees/') && req.method === 'POST') {
       if (!db) throw new Error('DB not initialized');
       const employee = req.body;
       if (!employee.employee_no) throw new Error('Employee No is required');
@@ -143,27 +144,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Update employee endpoint
-    if (url?.startsWith('/api/employees/') && req.method === 'PUT') {
+    if (path?.startsWith('/api/employees/') && req.method === 'PUT') {
       if (!db) throw new Error('DB not initialized');
-      const id = url.split('/').pop();
+      const id = path.split('/').pop();
       const body = req.body;
       
-      const docRef = doc(db, 'hse_employees', id);
+      const docRef = doc(db, 'hse_employees', id as string);
       await updateDoc(docRef, { ...body, updated_at: new Date().toISOString() });
       return res.json({ success: true });
     }
 
     // Delete employee endpoint
-    if (url?.startsWith('/api/employees/') && req.method === 'DELETE') {
+    if (path?.startsWith('/api/employees/') && req.method === 'DELETE') {
       if (!db) throw new Error('DB not initialized');
-      const id = url.split('/').pop();
-      const docRef = doc(db, 'hse_employees', id);
+      const id = path.split('/').pop();
+      const docRef = doc(db, 'hse_employees', id as string);
       await deleteDoc(docRef);
       return res.json({ success: true });
     }
 
     // Stats endpoint
-    if (url === '/api/stats' || url === '/api/stats/') {
+    if (path === '/api/stats' || path === '/api/stats/') {
       if (!db) throw new Error('DB not initialized');
       const snapshot = await getDocs(collection(db, 'hse_employees'));
       const data = snapshot.docs.map(doc => doc.data());
@@ -194,10 +195,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return acc;
       }, {});
 
+      const designationBreakdown = safeData.reduce((acc: any, curr: any) => {
+        if (curr.designation) {
+          acc[curr.designation] = (acc[curr.designation] || 0) + 1;
+        }
+        return acc;
+      }, {});
+
       return res.json({
         kpiDistribution,
         employeesPerProject,
-        qualificationBreakdown
+        qualificationBreakdown,
+        designationBreakdown
       });
     }
 

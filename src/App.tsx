@@ -73,6 +73,7 @@ interface Stats {
   kpiDistribution: Record<string, number>;
   employeesPerProject: Record<string, number>;
   qualificationBreakdown: Record<string, number>;
+  designationBreakdown: Record<string, number>;
 }
 
 export default function App() {
@@ -824,6 +825,19 @@ export default function App() {
                     <div className="text-[10px] text-indigo-200">Projects</div>
                   </div>
                 </div>
+                {stats?.designationBreakdown && (
+                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm mt-3">
+                    <div className="text-[10px] font-bold text-indigo-200 mb-2 uppercase tracking-wide">Designation Breakdown</div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                      {Object.entries(stats.designationBreakdown).map(([role, count]) => (
+                        <div key={role} className="flex justify-between text-[10px]">
+                          <span className="truncate mr-1" title={role}>{role}</span>
+                          <span className="font-bold">{count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
 
