@@ -152,6 +152,10 @@ export default function App() {
   const [saveProfileLoading, setSaveProfileLoading] = useState(false);
   const [leadershipContacts, setLeadershipContacts] = useState<any[]>([]);
   const [isSeeding, setIsSeeding] = useState(false);
+  const [photoInputUrl, setPhotoInputUrl] = useState('');
+  const [isPhotoInputOpen, setIsPhotoInputOpen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmSeed, setConfirmSeed] = useState(false);
 
   const fetchLeadership = async () => {
     try {
@@ -166,7 +170,12 @@ export default function App() {
   };
 
   const handleSeedLeadership = async () => {
-    if (!confirm('This will import/reset HSE Leadership data. Continue?')) return;
+    if (!confirmSeed) {
+      setConfirmSeed(true);
+      setTimeout(() => setConfirmSeed(false), 3000); // Reset after 3s
+      return;
+    }
+    setConfirmSeed(false);
     setIsSeeding(true);
     try {
       const res = await fetch('/api/seed-leadership', { method: 'POST' });
@@ -461,7 +470,12 @@ export default function App() {
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this employee record?')) return;
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      setTimeout(() => setConfirmDeleteId(null), 3000);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
       const data = await res.json();
@@ -1362,17 +1376,39 @@ export default function App() {
                             {isEditingProfile && (
                               <div 
                                 className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-                                onClick={() => {
-                                  const url = prompt('Enter Profile Picture URL:');
-                                  if (url) setProfile(prev => ({ ...prev!, photoUrl: url }));
-                                }}
+                                onClick={() => setIsPhotoInputOpen(!isPhotoInputOpen)}
                               >
                                 <Camera className="w-6 h-6 text-white" />
                               </div>
                             )}
                           </div>
                           {isEditingProfile && (
-                            <span className="text-[10px] text-slate-500 font-medium">Click to change photo</span>
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[10px] text-slate-500 font-medium">Click photo to toggle URL input</span>
+                              {isPhotoInputOpen && (
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="text"
+                                    placeholder="Paste Image URL"
+                                    className={`text-[10px] px-2 py-1 rounded border focus:ring-1 focus:ring-indigo-500 outline-none ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                    value={photoInputUrl}
+                                    onChange={(e) => setPhotoInputUrl(e.target.value)}
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      if (photoInputUrl) {
+                                        setProfile(prev => ({ ...prev!, photoUrl: photoInputUrl }));
+                                        setIsPhotoInputOpen(false);
+                                        setPhotoInputUrl('');
+                                      }
+                                    }}
+                                    className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded"
+                                  >
+                                    Apply
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
 
@@ -1516,10 +1552,14 @@ export default function App() {
                         <button 
                           onClick={handleSeedLeadership}
                           disabled={isSeeding}
-                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'} hover:opacity-80`}
+                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${
+                            confirmSeed 
+                              ? 'bg-amber-600 text-white animate-pulse' 
+                              : isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'
+                          } hover:opacity-80`}
                         >
                           <Database className="w-4 h-4" /> 
-                          {isSeeding ? 'Importing...' : 'Import Leadership Data'}
+                          {isSeeding ? 'Importing...' : confirmSeed ? 'Click again to CONFIRM Import' : 'Import Leadership Data'}
                         </button>
                       </div>
 
@@ -1554,10 +1594,15 @@ export default function App() {
                                 </button>
                                 <button 
                                   onClick={() => handleDeleteEmployee(emp.id.toString())}
-                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-rose-400 hover:bg-rose-900/30' : 'text-rose-500 hover:bg-rose-50'}`}
-                                  title="Delete Employee"
+                                  className={`p-2 rounded-lg transition-colors flex items-center gap-1 ${
+                                    confirmDeleteId === emp.id.toString() 
+                                      ? 'bg-rose-600 text-white animate-pulse' 
+                                      : isDarkMode ? 'text-rose-400 hover:bg-rose-900/30' : 'text-rose-500 hover:bg-rose-50'
+                                  }`}
+                                  title={confirmDeleteId === emp.id.toString() ? "Click again to confirm delete" : "Delete Employee"}
                                 >
                                   <Trash2 className="w-4 h-4" />
+                                  {confirmDeleteId === emp.id.toString() && <span className="text-[8px] font-bold">CONFIRM?</span>}
                                 </button>
                                 <button 
                                   onClick={() => handleViewEmployee(emp)}
