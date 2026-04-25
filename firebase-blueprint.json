@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "HSE Employee record",
+      "type": "object",
+      "properties": {
+        "sn": { "type": "number" },
+        "level": { "type": "string" },
+        "employee_no": { "type": "string" },
+        "employee_name": { "type": "string" },
+        "department": { "type": "string" },
+        "recommended_for": { "type": "string" },
+        "date_of_joining": { "type": "string", "format": "date" },
+        "designation": { "type": "string" },
+        "gender": { "type": "string" },
+        "dob": { "type": "string", "format": "date" },
+        "qualification": { "type": "string" },
+        "nationality": { "type": "string" },
+        "kpi": { "type": "number" },
+        "project": { "type": "string" },
+        "line_manager": { "type": "string" },
+        "area_manager": { "type": "string" },
+        "bu_manager": { "type": "string" }
+      },
+      "required": ["employee_no", "employee_name"]
+    }
+  },
+  "firestore": {
+    "hse_employees": {
+      "schema": "Employee",
+      "description": "Collection of HSE employees"
+    }
+  }
+}

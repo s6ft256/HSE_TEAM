@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidEmployee(data) {
+      return data.keys().hasAll(['employee_no', 'employee_name']) &&
+             data.employee_no is string && data.employee_no.size() <= 50 &&
+             data.employee_name is string && data.employee_name.size() <= 200 &&
+             (data.get('department', '') is string) &&
+             (data.get('designation', '') is string) &&
+             (data.get('employee_no', '').matches('^[a-zA-Z0-9_\\-]+$'));
+    }
+
+    match /hse_employees/{employeeId} {
+      allow read: if true;
+      allow write: if true; // Enabling for admin functionality
+    }
+
+    match /hse_projects/{projectId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

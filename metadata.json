@@ -1,0 +1,6 @@
+{
+  "name": "Workforce Analytics Dashboard",
+  "description": "A hierarchical employee and KPI data visualization tool using Supabase as a backend database.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
