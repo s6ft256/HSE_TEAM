@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, query, limit, where, getCountFromServer, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, limit, where, getCountFromServer, doc, setDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
 import dotenv from 'dotenv';
 
@@ -60,6 +60,33 @@ app.get('/api/health', async (req, res) => {
     firebaseInitialized: !!db,
     tableInfo
   });
+});
+
+// Profile endpoints
+app.all('/api/profile', async (req, res) => {
+  try {
+    if (!db) throw new Error('DB not initialized');
+    const uid = (req.query.uid as string) || (req.body?.uid as string);
+    if (!uid) throw new Error('UID is required');
+
+    if (req.method === 'GET') {
+      const docRef = doc(db, 'management_profiles', uid);
+      const profileSnap = await getDoc(docRef);
+      if (!profileSnap.exists()) {
+        return res.json(null);
+      }
+      return res.json(profileSnap.data());
+    }
+
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const profile = req.body;
+      const docRef = doc(db, 'management_profiles', uid);
+      await setDoc(docRef, { ...profile, uid, updatedAt: new Date().toISOString() }, { merge: true });
+      return res.json({ success: true });
+    }
+  } catch (err: any) {
+    res.status(200).json({ error: err.message });
+  }
 });
 
 app.get('/api/projects', async (req, res) => {
@@ -131,7 +158,8 @@ app.get('/api/search', async (req, res) => {
       .filter(emp => {
         return (emp.employee_no?.toLowerCase().includes(term)) ||
                (emp.employee_name?.toLowerCase().includes(term)) ||
-               (emp.department?.toLowerCase().includes(term));
+               (emp.department?.toLowerCase().includes(term)) ||
+               (emp.designation?.toLowerCase().includes(term));
       })
       .slice(0, 50);
     
@@ -217,10 +245,18 @@ app.get('/api/stats', async (req, res) => {
       return acc;
     }, {});
 
+    const designationBreakdown = safeData.reduce((acc: any, curr: any) => {
+      if (curr.designation) {
+        acc[curr.designation] = (acc[curr.designation] || 0) + 1;
+      }
+      return acc;
+    }, {});
+
     res.json({
       kpiDistribution,
       employeesPerProject,
-      qualificationBreakdown
+      qualificationBreakdown,
+      designationBreakdown
     });
   } catch (err: any) {
     res.status(200).json({ error: err.message });

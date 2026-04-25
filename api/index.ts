@@ -1,6 +1,6 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, query, limit, where, getCountFromServer, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, limit, where, getCountFromServer, doc, setDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
 
@@ -66,6 +66,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         firebaseInitialized: !!db,
         tableInfo
       });
+    }
+
+    // Profile endpoints
+    if (path === '/api/profile' || path === '/api/profile/') {
+      if (!db) throw new Error('DB not initialized');
+      const uid = (req.query.uid as string) || (req.body?.uid as string);
+      if (!uid) throw new Error('UID is required');
+
+      if (req.method === 'GET') {
+        const docRef = doc(db, 'management_profiles', uid);
+        const profileSnap = await getDoc(docRef);
+        if (!profileSnap.exists()) {
+          return res.json(null);
+        }
+        return res.json(profileSnap.data());
+      }
+
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const profile = req.body;
+        const docRef = doc(db, 'management_profiles', uid);
+        await setDoc(docRef, { ...profile, uid, updatedAt: new Date().toISOString() }, { merge: true });
+        return res.json({ success: true });
+      }
     }
 
     // Projects endpoint

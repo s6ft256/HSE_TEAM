@@ -31,14 +31,47 @@ service cloud.firestore {
              (data.get('employee_no', '').matches('^[a-zA-Z0-9_\\-]+$'));
     }
 
-    match /hse_employees/{employeeId} {
-      allow read: if true;
-      allow write: if true; // Enabling for admin functionality
-    }
+  function isHSEAdmin() {
+    return isSignedIn() && (
+      request.auth.token.email == 'ahmed.abbas@trojanholding.com' ||
+      request.auth.token.email == 'amal.j@npc.ae' ||
+      request.auth.token.email == 'irshad.syed@npc.ae' ||
+      request.auth.token.email == 'vidyaasree.v@trojan.ae' ||
+      request.auth.token.email == 'alshifa.s@trojan.ae' ||
+      request.auth.token.email == 'alejandro.l@trojan.ae' ||
+      request.auth.token.email == 'm.shahbaz@trojan.ae' ||
+      request.auth.token.email == 'm.razal@trojan.ae' ||
+      request.auth.token.email == 'elius.n@trojan.ae' ||
+      request.auth.token.email == 'niwamanyaelius95@gmail.com'
+    );
+  }
 
-    match /hse_projects/{projectId} {
-      allow read: if true;
-      allow write: if true;
-    }
+  function isValidManagementProfile(data) {
+    return data.keys().hasAll(['uid', 'email']) &&
+           data.uid == request.auth.uid &&
+           data.email is string &&
+           (data.get('fullName', '') is string) &&
+           (data.get('phoneNumber', '') is string) &&
+           (data.get('role', '') is string) &&
+           (data.get('department', '') is string) &&
+           (data.get('officeLocation', '') is string) &&
+           (data.get('photoUrl', '') is string);
+  }
+
+  match /hse_employees/{employeeId} {
+    allow read: if true;
+    allow write: if isHSEAdmin(); 
+  }
+
+  match /management_profiles/{uid} {
+    allow read: if isSignedIn() && request.auth.uid == uid;
+    allow create, update: if isSignedIn() && request.auth.uid == uid && isValidManagementProfile(incoming());
+    allow delete: if false;
+  }
+
+  match /hse_projects/{projectId} {
+    allow read: if true;
+    allow write: if isHSEAdmin();
+  }
   }
 }

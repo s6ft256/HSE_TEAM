@@ -15,11 +15,13 @@ import {
   Trash2,
   Edit2,
   ShieldCheck,
+  User,
   X,
   Mail,
   Github,
   Moon,
-  Sun
+  Sun,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -76,6 +78,18 @@ interface Stats {
   designationBreakdown: Record<string, number>;
 }
 
+interface ManagementProfile {
+  uid: string;
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  role: string;
+  department: string;
+  officeLocation: string;
+  photoUrl?: string;
+  updatedAt?: string;
+}
+
 export default function App() {
   const [projects, setProjects] = useState<string[]>([]);
   const [lineManagers, setLineManagers] = useState<string[]>([]);
@@ -126,11 +140,14 @@ export default function App() {
     'alejandro.l@trojan.ae',
     'm.shahbaz@trojan.ae',
     'm.razal@trojan.ae',
-    'elius.n@trojan.ae'
+    'elius.n@trojan.ae',
+    'niwamanyaelius95@gmail.com'
   ];
 
   const [error, setError] = useState<string | null>(null);
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
+  const [profile, setProfile] = useState<ManagementProfile | null>(null);
+  const [saveProfileLoading, setSaveProfileLoading] = useState(false);
 
   useEffect(() => {
     fetch('/api/health')
@@ -314,13 +331,58 @@ export default function App() {
   };
 
   const handleAuthSubmit = () => {
-    if (authorizedUsers.includes(authEmail.toLowerCase())) {
+    const email = authEmail.toLowerCase();
+    if (authorizedUsers.includes(email)) {
       setIsAdminMode(true);
-      setCurrentUser(authEmail);
+      setCurrentUser(email);
       setShowAuthModal(false);
       setAuthEmail('');
+
+      // Fetch profile
+      fetch(`/api/profile?uid=${encodeURIComponent(email)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data) {
+            setProfile(data);
+          } else {
+            const initialProfile: ManagementProfile = {
+              uid: email,
+              email: email,
+              fullName: email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+              phoneNumber: '',
+              role: 'HSE Manager',
+              department: 'HSE',
+              officeLocation: 'Head Office'
+            };
+            setProfile(initialProfile);
+          }
+        })
+        .catch(err => console.error('Profile fetch error:', err));
     } else {
       alert('Access denied. Only authorized HSE Leadership members can access the Admin portal.');
+    }
+  };
+
+  const handleSaveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    setSaveProfileLoading(true);
+
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Profile updated successfully!');
+      }
+    } catch (err) {
+      console.error('Profile save error:', err);
+      alert('Failed to save profile updates.');
+    } finally {
+      setSaveProfileLoading(false);
     }
   };
 
@@ -419,7 +481,7 @@ export default function App() {
                     : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {tab}
+                {tab === 'Settings' ? 'System Settings' : tab}
               </button>
             ))}
           </div>
@@ -1216,123 +1278,143 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-6">
-                    {/* My Profile Section */}
-                    {currentUser && (
-                      <div className="bg-gradient-to-r from-indigo-50 to-emerald-50 rounded-xl p-4 border border-indigo-100">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-lg">
-                              {currentUser.charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <h3 className="font-bold text-slate-800">{currentUser}</h3>
-                              <p className="text-xs text-slate-500">Administrator Access</p>
+                  <div className="space-y-8">
+                    {/* Management Profile Section */}
+                    <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex items-center gap-3 mb-6">
+                        <User className="w-5 h-5 text-indigo-500" />
+                        <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Management Profile</h3>
+                      </div>
+                      
+                      <div className="flex flex-col md:flex-row gap-6 mb-6">
+                        <div className="flex flex-col items-center gap-2">
+                          <div className={`w-24 h-24 rounded-2xl overflow-hidden border-2 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} flex items-center justify-center relative group`}>
+                            {profile?.photoUrl ? (
+                              <img src={profile.photoUrl} alt="Profile" className="w-full h-full object-cover" />
+                            ) : (
+                              <User className="w-10 h-10 text-slate-300" />
+                            )}
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
+                              <Camera className="w-6 h-6 text-white" />
+                              <input 
+                                type="url" 
+                                placeholder="Paste Image URL"
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                onChange={(e) => {
+                                  const url = prompt('Enter Profile Picture URL:');
+                                  if (url) setProfile(prev => ({ ...prev!, photoUrl: url }));
+                                }}
+                              />
                             </div>
                           </div>
-                          <button
-                            onClick={() => {
-                              // Find employee with matching email and open edit form
-                              const myProfile = adminSearchResults.find(emp => 
-                                emp.email?.toLowerCase() === currentUser.toLowerCase()
-                              );
-                              if (myProfile) {
-                                setEditingEmployee(myProfile);
-                                setShowEmployeeForm(true);
-                              } else {
-                                alert('Your profile was not found in the employee database. Please contact HR to add your record.');
-                              }
-                            }}
-                            className="flex items-center gap-2 px-4 py-2 bg-white text-indigo-600 rounded-lg text-xs font-bold border border-indigo-200 hover:bg-indigo-50 transition-colors shadow-sm"
+                          <span className="text-[10px] text-slate-500 font-medium">Click to change photo</span>
+                        </div>
+
+                        <form onSubmit={handleSaveProfile} className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Full Name</label>
+                          <input 
+                            type="text"
+                            required
+                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                            value={profile?.fullName || ''}
+                            onChange={e => setProfile(prev => ({ ...prev!, fullName: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Email Address</label>
+                          <input 
+                            type="email"
+                            disabled
+                            className={`w-full px-4 py-2 rounded-lg border text-sm opacity-60 cursor-not-allowed ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
+                            value={profile?.email || ''}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Phone Number</label>
+                          <input 
+                            type="tel"
+                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                            value={profile?.phoneNumber || ''}
+                            onChange={e => setProfile(prev => ({ ...prev!, phoneNumber: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Role / Designation</label>
+                          <input 
+                            type="text"
+                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                            value={profile?.role || ''}
+                            onChange={e => setProfile(prev => ({ ...prev!, role: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Department</label>
+                          <input 
+                            type="text"
+                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                            value={profile?.department || ''}
+                            onChange={e => setProfile(prev => ({ ...prev!, department: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Office Location</label>
+                          <input 
+                            type="text"
+                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                            value={profile?.officeLocation || ''}
+                            onChange={e => setProfile(prev => ({ ...prev!, officeLocation: e.target.value }))}
+                          />
+                        </div>
+                        <div className="md:col-span-2 pt-2 flex justify-end">
+                          <button 
+                            type="submit"
+                            disabled={saveProfileLoading}
+                            className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
                           >
-                            <Edit2 className="w-3.5 h-3.5" /> Edit My Profile
+                            {saveProfileLoading ? (
+                              <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            ) : (
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                            )}
+                            Update Profile
                           </button>
                         </div>
-                      </div>
-                    )}
-
-                    <div className="flex flex-col sm:flex-row gap-4 items-center">
-                      <div className="relative flex-1 w-full">
-                        <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                        <input 
-                          type="text" 
-                          placeholder="Search for employee to manage..."
-                          value={adminSearchTerm}
-                          onChange={(e) => setAdminSearchTerm(e.target.value)}
-                          className={`w-full rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-slate-50 border-slate-200'}`}
-                        />
-                      </div>
-                      <button 
-                        onClick={() => {
-                          setEditingEmployee({});
-                          setShowEmployeeForm(true);
-                        }}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors shadow-sm"
-                      >
-                        <Plus className="w-4 h-4" /> Add New Employee
-                      </button>
+                      </form>
                     </div>
 
-                    <div className={`overflow-x-auto rounded-xl border ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                      <table className="w-full text-left text-sm">
-                        <thead className={isDarkMode ? 'bg-slate-700/50' : 'bg-slate-50'}>
-                          <tr className={`font-bold uppercase tracking-wider text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                            <th className="px-5 py-3">Employee No / Name</th>
-                            <th className="px-5 py-3">Project</th>
-                            <th className="px-5 py-3 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className={`divide-y ${isDarkMode ? 'divide-slate-700' : 'divide-slate-100'}`}>
-                          {adminSearchResults.length > 0 ? adminSearchResults.map(emp => (
-                            <tr key={emp.employee_no} className={`transition-colors ${isDarkMode ? 'hover:bg-slate-700/50' : 'hover:bg-slate-50'}`}>
-                              <td className="px-5 py-3">
-                                <div className={`font-bold cursor-pointer transition-colors ${isDarkMode ? 'text-slate-200 hover:text-indigo-400' : 'text-slate-800 hover:text-indigo-600'}`} onClick={() => handleViewEmployee(emp)}>
-                                  {emp.employee_name}
-                                </div>
-                                <div className={`text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{emp.employee_no}</div>
-                              </td>
-                              <td className={`px-5 py-3 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{emp.project}</td>
-                              <td className="px-5 py-3 text-right">
-                                <div className="flex items-center justify-end gap-2">
-                                  <button 
-                                    onClick={() => handleViewEmployee(emp)}
-                                    className={`p-1.5 rounded transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-600' : 'text-slate-600 hover:bg-slate-50'}`}
-                                    title="View Details"
-                                  >
-                                    <Users className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      setEditingEmployee(emp);
-                                      setShowEmployeeForm(true);
-                                    }}
-                                    className={`p-1.5 rounded transition-colors ${isDarkMode ? 'text-indigo-400 hover:bg-indigo-900/50' : 'text-indigo-600 hover:bg-indigo-50'}`}
-                                    title="Edit Employee"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteEmployee(emp.employee_no)}
-                                    className={`p-1.5 rounded transition-colors ${isDarkMode ? 'text-rose-400 hover:bg-rose-900/50' : 'text-rose-600 hover:bg-rose-50'}`}
-                                    title="Delete Employee"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          )) : (
-                            <tr>
-                              <td colSpan={3} className={`px-5 py-8 text-center text-xs italic ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                                Search for an employee to manage their record.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                    {/* Employee Management Section */}
+                    <div>
+                      <div className="flex items-center gap-3 mb-6">
+                        <Users className="w-5 h-5 text-emerald-500" />
+                        <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Employee Management</h3>
+                      </div>
+                      
+                      <div className="flex flex-col sm:flex-row gap-4 items-center mb-6">
+                        <div className="relative flex-1 w-full">
+                          <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                          <input 
+                            type="text" 
+                            placeholder="Search for employee to manage..."
+                            value={adminSearchTerm}
+                            onChange={(e) => setAdminSearchTerm(e.target.value)}
+                            className={`w-full rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-slate-50 border-slate-200'}`}
+                          />
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setEditingEmployee({});
+                            setShowEmployeeForm(true);
+                          }}
+                          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors shadow-sm"
+                        >
+                          <Plus className="w-4 h-4" /> Add New Employee
+                        </button>
+                      </div>
                     </div>
                   </div>
-                )}
+                </div>
+              )}
               </div>
             </motion.div>
           )}

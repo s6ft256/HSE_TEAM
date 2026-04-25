@@ -24,12 +24,33 @@
         "bu_manager": { "type": "string" }
       },
       "required": ["employee_no", "employee_name"]
+    },
+    "ManagementProfile": {
+      "title": "Management Profile",
+      "description": "Profile information for management users",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phoneNumber": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "officeLocation": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
     }
   },
   "firestore": {
     "hse_employees": {
       "schema": "Employee",
       "description": "Collection of HSE employees"
+    },
+    "management_profiles": {
+      "schema": "ManagementProfile",
+      "description": "User profiles for managers"
     }
   }
 }
