@@ -21,7 +21,8 @@ import {
   Github,
   Moon,
   Sun,
-  Camera
+  Camera,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -112,6 +113,7 @@ export default function App() {
 
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -148,8 +150,41 @@ export default function App() {
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
   const [profile, setProfile] = useState<ManagementProfile | null>(null);
   const [saveProfileLoading, setSaveProfileLoading] = useState(false);
+  const [leadershipContacts, setLeadershipContacts] = useState<any[]>([]);
+  const [isSeeding, setIsSeeding] = useState(false);
+
+  const fetchLeadership = async () => {
+    try {
+      const res = await fetch('/api/leadership');
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setLeadershipContacts(data);
+      }
+    } catch (err) {
+      console.error('Leadership fetch error:', err);
+    }
+  };
+
+  const handleSeedLeadership = async () => {
+    if (!confirm('This will import/reset HSE Leadership data. Continue?')) return;
+    setIsSeeding(true);
+    try {
+      const res = await fetch('/api/seed-leadership', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('Leadership data imported successfully!');
+        fetchLeadership();
+      }
+    } catch (err) {
+      console.error('Seed error:', err);
+      alert('Failed to import leadership data.');
+    } finally {
+      setIsSeeding(false);
+    }
+  };
 
   useEffect(() => {
+    fetchLeadership();
     fetch('/api/health')
       .then(res => res.json())
       .then(data => setFirebaseStatus(data))
@@ -173,35 +208,37 @@ export default function App() {
         setError('Connection failed. Please check your Supabase secrets.');
       });
     
-    fetch('/api/stats')
-      .then(res => res.json())
-      .then(data => {
-        if (data && !data.error) {
-          setStats(data);
-        } else if (data && data.error) {
-          console.warn('Stats API reported error:', data.error);
-        }
-      })
-      .catch(err => console.error('Stats fetch error:', err));
+    const fetchGlobalStats = () => {
+      fetch('/api/stats')
+        .then(res => res.json())
+        .then(data => {
+          if (data && !data.error) {
+            setStats(data);
+          }
+        })
+        .catch(err => console.error('Stats fetch error:', err));
+      
+      fetch('/api/projects')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setProjects(data);
+        })
+        .catch(err => console.error('Projects fetch error:', err));
 
-    // Fetch global line managers and area managers for Overview card
-    fetch('/api/line-managers')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setGlobalLineManagers(data);
-        }
-      })
-      .catch(err => console.error('Global line managers fetch error:', err));
+      // If an area manager is selected, refresh those employees
+      if (selectedAreaManager) {
+        fetch(`/api/employees?area_manager=${encodeURIComponent(selectedAreaManager)}`)
+          .then(res => res.json())
+          .then(data => {
+            if (Array.isArray(data)) setEmployees(data);
+          })
+          .catch(err => console.error('Periodic employee fetch error:', err));
+      }
+    };
 
-    fetch('/api/area-managers')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setGlobalAreaManagers(data);
-        }
-      })
-      .catch(err => console.error('Global area managers fetch error:', err));
+    fetchGlobalStats();
+    const interval = setInterval(fetchGlobalStats, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -377,6 +414,7 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         alert('Profile updated successfully!');
+        setIsEditingProfile(false);
       }
     } catch (err) {
       console.error('Profile save error:', err);
@@ -404,10 +442,19 @@ export default function App() {
       if (data.success) {
         setShowEmployeeForm(false);
         setEditingEmployee(null);
-        // Refresh stats/search if needed
+        alert('Employee record saved successfully');
+        // Refresh searches
+        if (adminSearchTerm) {
+          fetch(`/api/search?q=${encodeURIComponent(adminSearchTerm)}`)
+            .then(res => res.json())
+            .then(data => {
+              if (Array.isArray(data)) setAdminSearchResults(data);
+            });
+        }
       }
     } catch (err) {
       console.error('Save error:', err);
+      alert('Failed to save employee record');
     } finally {
       setFormLoading(false);
     }
@@ -420,9 +467,13 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setAdminSearchResults(prev => prev.filter(emp => emp.employee_no !== id));
+        alert('Employee deleted successfully');
+      } else {
+        alert('Failed to delete employee');
       }
     } catch (err) {
       console.error('Delete error:', err);
+      alert('Error occurred while deleting');
     }
   };
 
@@ -459,10 +510,14 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <img 
-              src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRmjqIjLT1M9XvjYDBcYbm2BSr5Q-AxtJYg0g&s" 
+              src="https://www.trojanholding.ae/assets/images/logo.png" 
               alt="Trojan Logo" 
-              className="h-16 w-auto object-contain rounded"
+              className="h-12 w-auto object-contain brightness-0 invert"
               referrerPolicy="no-referrer"
+              onError={(e) => {
+                // Fallback to a generic icon or simpler logo if the main one fails
+                e.currentTarget.src = "https://img.icons8.com/color/96/shield.png";
+              }}
             />
             <div className="hidden sm:block">
               <h1 className={`text-lg font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE TEAM MANAGEMENT SYSTEM</h1>
@@ -1119,7 +1174,7 @@ export default function App() {
                 <div className="space-y-4">
                   <div className={`text-sm font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>HSE Leadership & Support Contacts</div>
                   
-                  {[
+                  {(leadershipContacts.length > 0 ? leadershipContacts : [
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
                       role: "HSSE Manager",
@@ -1164,7 +1219,7 @@ export default function App() {
                       github: "https://github.com/s6ft256",
                       reference: "TR47934"
                     }
-                  ].map((person, index) => (
+                  ]).map((person, index) => (
                     <motion.div
                       key={person.email}
                       initial={{ opacity: 0, x: -20 }}
@@ -1281,9 +1336,19 @@ export default function App() {
                   <div className="space-y-8">
                     {/* Management Profile Section */}
                     <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-                      <div className="flex items-center gap-3 mb-6">
-                        <User className="w-5 h-5 text-indigo-500" />
-                        <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Management Profile</h3>
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <User className="w-5 h-5 text-indigo-500" />
+                          <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Management Profile</h3>
+                        </div>
+                        {!isEditingProfile && (
+                          <button 
+                            onClick={() => setIsEditingProfile(true)}
+                            className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-100 transition-colors"
+                          >
+                            <Edit2 className="w-3 h-3" /> Edit Profile
+                          </button>
+                        )}
                       </div>
                       
                       <div className="flex flex-col md:flex-row gap-6 mb-6">
@@ -1294,93 +1359,131 @@ export default function App() {
                             ) : (
                               <User className="w-10 h-10 text-slate-300" />
                             )}
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                              <Camera className="w-6 h-6 text-white" />
-                              <input 
-                                type="url" 
-                                placeholder="Paste Image URL"
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                onChange={(e) => {
+                            {isEditingProfile && (
+                              <div 
+                                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
+                                onClick={() => {
                                   const url = prompt('Enter Profile Picture URL:');
                                   if (url) setProfile(prev => ({ ...prev!, photoUrl: url }));
                                 }}
-                              />
-                            </div>
+                              >
+                                <Camera className="w-6 h-6 text-white" />
+                              </div>
+                            )}
                           </div>
-                          <span className="text-[10px] text-slate-500 font-medium">Click to change photo</span>
+                          {isEditingProfile && (
+                            <span className="text-[10px] text-slate-500 font-medium">Click to change photo</span>
+                          )}
                         </div>
 
-                        <form onSubmit={handleSaveProfile} className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Full Name</label>
-                          <input 
-                            type="text"
-                            required
-                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                            value={profile?.fullName || ''}
-                            onChange={e => setProfile(prev => ({ ...prev!, fullName: e.target.value }))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Email Address</label>
-                          <input 
-                            type="email"
-                            disabled
-                            className={`w-full px-4 py-2 rounded-lg border text-sm opacity-60 cursor-not-allowed ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
-                            value={profile?.email || ''}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Phone Number</label>
-                          <input 
-                            type="tel"
-                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                            value={profile?.phoneNumber || ''}
-                            onChange={e => setProfile(prev => ({ ...prev!, phoneNumber: e.target.value }))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Role / Designation</label>
-                          <input 
-                            type="text"
-                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                            value={profile?.role || ''}
-                            onChange={e => setProfile(prev => ({ ...prev!, role: e.target.value }))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Department</label>
-                          <input 
-                            type="text"
-                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                            value={profile?.department || ''}
-                            onChange={e => setProfile(prev => ({ ...prev!, department: e.target.value }))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Office Location</label>
-                          <input 
-                            type="text"
-                            className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                            value={profile?.officeLocation || ''}
-                            onChange={e => setProfile(prev => ({ ...prev!, officeLocation: e.target.value }))}
-                          />
-                        </div>
-                        <div className="md:col-span-2 pt-2 flex justify-end">
-                          <button 
-                            type="submit"
-                            disabled={saveProfileLoading}
-                            className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
-                          >
-                            {saveProfileLoading ? (
-                              <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            ) : (
-                              <ShieldCheck className="w-3.5 h-3.5" />
-                            )}
-                            Update Profile
-                          </button>
-                        </div>
-                      </form>
+                        {!isEditingProfile ? (
+                          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-8">
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Full Name</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.fullName || 'N/A'}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Email Address</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.email || 'N/A'}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Phone Number</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.phoneNumber || 'Not Set'}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Role</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.role || 'HSE Manager'}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Department</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.department || 'HSE'}</p>
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Office</span>
+                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.officeLocation || 'Head Office'}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <form onSubmit={handleSaveProfile} className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Full Name</label>
+                              <input 
+                                type="text"
+                                required
+                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                value={profile?.fullName || ''}
+                                onChange={e => setProfile(prev => ({ ...prev!, fullName: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Email Address</label>
+                              <input 
+                                type="email"
+                                disabled
+                                className={`w-full px-4 py-2 rounded-lg border text-sm opacity-60 cursor-not-allowed ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
+                                value={profile?.email || ''}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Phone Number</label>
+                              <input 
+                                type="tel"
+                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                value={profile?.phoneNumber || ''}
+                                onChange={e => setProfile(prev => ({ ...prev!, phoneNumber: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Role / Designation</label>
+                              <input 
+                                type="text"
+                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                value={profile?.role || ''}
+                                onChange={e => setProfile(prev => ({ ...prev!, role: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Department</label>
+                              <input 
+                                type="text"
+                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                value={profile?.department || ''}
+                                onChange={e => setProfile(prev => ({ ...prev!, department: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Office Location</label>
+                              <input 
+                                type="text"
+                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                value={profile?.officeLocation || ''}
+                                onChange={e => setProfile(prev => ({ ...prev!, officeLocation: e.target.value }))}
+                              />
+                            </div>
+                            <div className="md:col-span-2 pt-2 flex justify-end gap-3">
+                              <button 
+                                type="button"
+                                onClick={() => setIsEditingProfile(false)}
+                                className={`px-4 py-2 text-xs font-bold ${isDarkMode ? 'text-slate-400 hover:text-slate-300' : 'text-slate-500 hover:text-slate-800'}`}
+                              >
+                                Cancel
+                              </button>
+                              <button 
+                                type="submit"
+                                disabled={saveProfileLoading}
+                                className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
+                              >
+                                {saveProfileLoading ? (
+                                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                ) : (
+                                  <ShieldCheck className="w-3.5 h-3.5" />
+                                )}
+                                Save Changes
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
                     </div>
 
                     {/* Employee Management Section */}
@@ -1410,11 +1513,73 @@ export default function App() {
                         >
                           <Plus className="w-4 h-4" /> Add New Employee
                         </button>
+                        <button 
+                          onClick={handleSeedLeadership}
+                          disabled={isSeeding}
+                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'} hover:opacity-80`}
+                        >
+                          <Database className="w-4 h-4" /> 
+                          {isSeeding ? 'Importing...' : 'Import Leadership Data'}
+                        </button>
                       </div>
+
+                      {/* Admin Search Results List */}
+                      {adminSearchResults.length > 0 && (
+                        <div className="space-y-3">
+                          {adminSearchResults.map((emp) => (
+                            <div 
+                              key={emp.id}
+                              className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${isDarkMode ? 'bg-slate-700/30 border-slate-600 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:border-indigo-200 shadow-sm'}`}
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className={`w-10 h-10 flex-shrink-0 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+                                  {emp.sn}
+                                </div>
+                                <div>
+                                  <h4 className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{emp.employee_name}</h4>
+                                  <p className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{emp.employee_no} • {emp.designation}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 sm:self-center">
+                                <button 
+                                  onClick={() => {
+                                    setEditingEmployee(emp);
+                                    setShowEmployeeForm(true);
+                                  }}
+                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-indigo-400 hover:bg-indigo-900/30' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                                  title="Edit Employee"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteEmployee(emp.id.toString())}
+                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-rose-400 hover:bg-rose-900/30' : 'text-rose-500 hover:bg-rose-50'}`}
+                                  title="Delete Employee"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => handleViewEmployee(emp)}
+                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:bg-slate-100'}`}
+                                  title="View Details"
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {adminSearchTerm.length >= 2 && adminSearchResults.length === 0 && (
+                        <div className={`p-12 text-center rounded-xl border-2 border-dashed ${isDarkMode ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
+                          <p className="text-sm font-medium">No results found for "{adminSearchTerm}"</p>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              )}
+                )}
               </div>
             </motion.div>
           )}
