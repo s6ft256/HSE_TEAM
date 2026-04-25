@@ -1,6 +1,3 @@
-import React, { useEffect, useState } from "react";
-import { getFirestore, collection, getDocs } from "firebase/firestore";
-import { initializeApp } from "firebase/app";
 import { useState, useEffect, FormEvent } from 'react';
 import { 
   Users, 
@@ -102,42 +99,12 @@ export default function App() {
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
 
   useEffect(() => {
-  async function loadProjects() {
-    try {
-      const snapshot = await getDocs(collection(db, "projects"));
-      const data = snapshot.docs.map(doc => doc.data());
+    fetch('/api/health')
+      .then(res => res.json())
+      .then(data => setFirebaseStatus(data))
+      .catch(err => console.error('Health check failed:', err));
 
-      setProjects(data);
-      setError(null);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message);
-      setProjects([]);
-    }
-  }
-
-  loadProjects();
-}, []);
-
-   
-
-const db = getFirestore();
-
-async function loadProjects() {
-  try {
-    const snapshot = await getDocs(collection(db, "projects"));
-    const data = snapshot.docs.map(doc => doc.data());
-
-    setProjects(data);
-    setError(null);
-  } catch (err) {
-    console.error(err);
-    setError(err.message);
-    setProjects([]);
-  }
-}
-
-loadProjects();
+    fetch('/api/projects')
       .then(res => res.json())
       .then(data => {
         if (data.error) {
@@ -152,7 +119,7 @@ loadProjects();
       })
       .catch(err => {
         console.error('Projects fetch error:', err);
-        setError('Connection failed. Please check your firestore secrets.');
+        setError('Connection failed. Please check your Supabase secrets.');
       });
     
     fetch('/api/stats')
@@ -764,7 +731,7 @@ loadProjects();
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
                       role: "HSSE Manager",
-                      dept: "HSE Department",
+                      dept: "Department",
                       project: "Trojan HQ",
                       email: "ahmed.abbas@trojanholding.com",
                       img: "https://media.licdn.com/dms/image/v2/C4D03AQG_2PVLqp894g/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1655174534836?e=1778716800&v=beta&t=CI5DMnpbVpj8ED7tFmYiPttn4-bAx-m_i1t-ymsP2Ds",
