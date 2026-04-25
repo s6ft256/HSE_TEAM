@@ -102,10 +102,22 @@ export default function App() {
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
 
   useEffect(() => {
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(data => setFirebaseStatus(data))
-      .catch(err => console.error('Health check failed:', err));
+  async function loadProjects() {
+    try {
+      const snapshot = await getDocs(collection(db, "projects"));
+      const data = snapshot.docs.map(doc => doc.data());
+
+      setProjects(data);
+      setError(null);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message);
+      setProjects([]);
+    }
+  }
+
+  loadProjects();
+}, []);
 
    
 
