@@ -862,7 +862,7 @@ export default function App() {
                                   index === 2 ? 'bg-amber-500' :
                                   'bg-slate-400'
                                 }`}
-                                style={{ width: `${(count / Math.max(...Object.values(departmentStats) as number[])) * 100}%` }}
+                                style={{ width: `${(Math.max(...Object.values(departmentStats) as number[]) > 0 ? (((count as number) / Math.max(...Object.values(departmentStats) as number[])) * 100) : 0)}%` }}
                               />
                             </div>
                             <span className={`text-sm font-bold w-8 text-right ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{count}</span>

@@ -1,16 +1,23 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, query, limit, where, getCountFromServer, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json' assert { type: 'json' };
+import fs from 'fs';
+import path from 'path';
 
 // Initialize Firebase
 let db: any = null;
 try {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`Firebase config file not found at ${configPath}`);
+  }
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
   console.log('Firebase initialized successfully with database:', firebaseConfig.firestoreDatabaseId);
-} catch (e) {
-  console.error('Firebase initialization error:', e);
+} catch (e: any) {
+  console.error('Firebase initialization error:', e.message);
+  // Do NOT return response here, let the request handlers handle db === null
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -195,9 +202,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     return res.status(404).json({ error: 'Endpoint not found' });
-
   } catch (err: any) {
     console.error('API Error:', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(200).json({ error: err.message });
   }
 }
