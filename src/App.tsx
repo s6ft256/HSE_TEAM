@@ -43,7 +43,6 @@ import {
   ArcElement,
 } from 'chart.js';
 import { Bar, Pie } from 'react-chartjs-2';
-import { PieChart, Pie as RePie, Cell, ResponsiveContainer, Tooltip as ReTooltip, Legend as ReLegend } from 'recharts';
 
 
 // Firebase imports
@@ -1596,32 +1595,6 @@ export default function App() {
 
                 {!isAdminMode ? (
                   <div className="max-w-xl space-y-6">
-                    {/* Add Pie Chart here */}
-                    <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-                      <h4 className={`font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Employees Per Project</h4>
-                      {stats?.employeesPerProject && (
-                        <ResponsiveContainer width="100%" height={250}>
-                          <PieChart>
-                            <RePie
-                              data={Object.entries(stats.employeesPerProject).map(([name, value]) => ({ name, value }))}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={60}
-                              outerRadius={80}
-                              paddingAngle={5}
-                              dataKey="value"
-                            >
-                              {Object.values(stats.employeesPerProject).map((_entry, index) => (
-                                <Cell key={`cell-${index}`} fill={['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
-                              ))}
-                            </RePie>
-                            <ReTooltip />
-                            <ReLegend />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
-                  
                     <div className={`flex items-center justify-between p-4 rounded-xl border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
                       <div>
                         <h4 className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Real-time Analytics</h4>
