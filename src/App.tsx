@@ -204,7 +204,7 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
-    document.title = "HSE TEAM";
+    document.title = "Trojan HSE Hub";
   }, []);
 
   // Pagination state
@@ -839,14 +839,14 @@ export default function App() {
               referrerPolicy="no-referrer"
             />
             <div className="hidden sm:block">
-              <h1 className={`text-lg font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE TEAM MANAGEMENT SYSTEM</h1>
-              <p className={`text-[10px] font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Employee Performance & Safety Dashboard</p>
+              <h1 className={`text-lg font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>TROJAN HSE PERFORMANCE HUB</h1>
+              <p className={`text-[10px] font-medium uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Workforce Analytics & Strategic Management</p>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
             <div className={`flex items-center gap-1 p-1 rounded-xl ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
-              {['Dashboard', 'Documentation', 'Support', 'Settings'].map((tab) => (
+              {['Dashboard', 'Leadership', 'Support', 'Settings'].map((tab) => (
                 <button 
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -1384,7 +1384,7 @@ export default function App() {
         </div>
       </>
           )}
-          {activeTab === 'Documentation' && (
+          {activeTab === 'Leadership' && (
             <motion.div 
               initial={{ opacity: 0, y: 20 }} 
               animate={{ opacity: 1, y: 0 }} 
@@ -2302,10 +2302,16 @@ export default function App() {
             
             <div className="flex gap-4">
               <button 
-                onClick={() => setActiveTab('Documentation')}
-                className={`text-[9px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'Documentation' ? 'text-indigo-600 border-b-2 border-indigo-600 pb-0.5' : 'text-slate-400 hover:text-indigo-600'}`}
+                onClick={() => setActiveTab('Dashboard')}
+                className={`text-[9px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'Dashboard' ? 'text-indigo-600 border-b-2 border-indigo-600 pb-0.5' : 'text-slate-400 hover:text-indigo-600'}`}
               >
-                Documentation
+                Dashboard
+              </button>
+              <button 
+                onClick={() => setActiveTab('Leadership')}
+                className={`text-[9px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'Leadership' ? 'text-indigo-600 border-b-2 border-indigo-600 pb-0.5' : 'text-slate-400 hover:text-indigo-600'}`}
+              >
+                Leadership
               </button>
               <button 
                 onClick={() => setActiveTab('Support')}
