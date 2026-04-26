@@ -148,6 +148,10 @@ export default function App() {
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(false);
 
+  useEffect(() => {
+    document.title = "HSE TEAM";
+  }, []);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
