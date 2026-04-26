@@ -96,7 +96,7 @@ app.get('/api/projects', async (req, res) => {
   try {
     if (!db) throw new Error('DB not initialized');
     const snapshot = await getDocs(collection(db, 'hse_employees'));
-    const projects = [...new Set(snapshot.docs.map(doc => doc.data().project))].filter(Boolean);
+    const projects = [...new Set(snapshot.docs.map(doc => doc.data().project))].filter(Boolean).sort();
     res.json(projects);
   } catch (err: any) {
     console.error('Projects API Error:', err.message);
@@ -111,7 +111,7 @@ app.get('/api/line-managers', async (req, res) => {
     const q = query(collection(db, 'hse_employees'), where('project', '==', project));
     const snapshot = await getDocs(q);
     
-    const managers = [...new Set(snapshot.docs.map(doc => doc.data().line_manager))].filter(Boolean);
+    const managers = [...new Set(snapshot.docs.map(doc => doc.data().line_manager))].filter(Boolean).sort();
     res.json(managers);
   } catch (err: any) {
     res.status(200).json({ error: err.message });
@@ -125,7 +125,7 @@ app.get('/api/area-managers', async (req, res) => {
     const q = query(collection(db, 'hse_employees'), where('line_manager', '==', lineManager));
     const snapshot = await getDocs(q);
     
-    const managers = [...new Set(snapshot.docs.map(doc => doc.data().area_manager))].filter(Boolean);
+    const managers = [...new Set(snapshot.docs.map(doc => doc.data().area_manager))].filter(Boolean).sort();
     res.json(managers);
   } catch (err: any) {
     res.status(200).json({ error: err.message });
@@ -253,10 +253,18 @@ app.get('/api/stats', async (req, res) => {
       return acc;
     }, {});
 
+    const projectBreakdown = safeData.reduce((acc: any, curr: any) => {
+      if (curr.project) {
+        acc[curr.project] = (acc[curr.project] || 0) + 1;
+      }
+      return acc;
+    }, {});
+
     res.json({
       kpiDistribution,
       qualificationBreakdown,
       designationBreakdown,
+      projectBreakdown,
       totalEmployees,
       totalProjects,
       totalLineManagers,

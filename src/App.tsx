@@ -83,10 +83,25 @@ interface Employee {
   "email": string;
 }
 
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  ResponsiveContainer, 
+  Cell,
+  PieChart,
+  Pie,
+  Legend
+} from 'recharts';
+
 interface Stats {
   kpiDistribution: Record<string, number>;
   qualificationBreakdown: Record<string, number>;
   designationBreakdown: Record<string, number>;
+  projectBreakdown?: Record<string, number>;
   totalEmployees?: number;
   totalProjects?: number;
   totalLineManagers?: number;
@@ -242,10 +257,10 @@ export default function App() {
             const initialProfile: ManagementProfile = {
               uid: profileId,
               email: email,
-              fullName: email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+              fullName: generateNameFromEmail(email),
               phoneNumber: '',
-              role: 'HSE Manager',
-              department: 'HSE',
+              role: getRoleFromEmail(email),
+              department: leadershipDirectory.find(p => p.email.toLowerCase() === email.toLowerCase())?.dept || 'HSE',
               officeLocation: 'Head Office',
               photoUrl: ''
             };
@@ -278,6 +293,33 @@ export default function App() {
     'niwamanyaelius95@gmail.com'
   ];
 
+  const leadershipDirectory = [
+    { name: "Ahmed Mohamed Abbas Ahmed", role: "HSSE Manager", email: "ahmed.abbas@trojanholding.com", dept: "Corporate" },
+    { name: "Amal Jagadi", role: "HSE Manager", email: "amal.j@npc.ae", dept: "Corporate" },
+    { name: "Irshad Basha Syed", role: "Safety Engineer", email: "irshad.syed@npc.ae", dept: "NPC" },
+    { name: "Vidyaasree Vijayakrishnan", role: "HSE Analyst", email: "vidyaasree.v@trojan.ae", dept: "Trojan" },
+    { name: "Alshifa Najiminisa Sajeer", role: "HSE Admin", email: "alshifa.s@trojan.ae", dept: "Trojan" },
+    { name: "Alejandro Llaguno", role: "HSE Admin", email: "alejandro.l@trojan.ae", dept: "Trojan" },
+    { name: "Muhammad Shahbaz Muhammad Ilyas", role: "Safety Engineer", email: "m.shahbaz@trojan.ae", dept: "Trojan" },
+    { name: "Mohammed Razal", role: "HSE Officer", email: "m.razal@trojan.ae", dept: "Trojan" },
+    { name: "Elius", role: "Tech Support", email: "elius.n@trojan.ae", dept: "Technical Support" }
+  ];
+
+  const generateNameFromEmail = (email: string) => {
+    const known = leadershipDirectory.find(p => p.email.toLowerCase() === email.toLowerCase());
+    if (known) return known.name;
+    
+    return email.split('@')[0].split('.').map(s => {
+      if (s.length <= 1) return s.toUpperCase() + '.';
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    }).join(' ');
+  };
+
+  const getRoleFromEmail = (email: string) => {
+    const known = leadershipDirectory.find(p => p.email.toLowerCase() === email.toLowerCase());
+    return known ? known.role : 'HSE Leadership';
+  };
+
   const [error, setError] = useState<string | null>(null);
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
   const [profile, setProfile] = useState<ManagementProfile | null>(null);
@@ -308,7 +350,7 @@ export default function App() {
           setError(projectsRes.error);
           setProjects([]);
         } else if (Array.isArray(projectsRes)) {
-          setProjects(projectsRes);
+          setProjects([...projectsRes].sort((a, b) => a.localeCompare(b)));
           setError(null);
         }
 
@@ -316,8 +358,8 @@ export default function App() {
           setStats(statsRes);
         }
 
-        if (Array.isArray(lmRes)) setGlobalLineManagers(lmRes);
-        if (Array.isArray(amRes)) setGlobalAreaManagers(amRes);
+        if (Array.isArray(lmRes)) setGlobalLineManagers([...lmRes].sort((a, b) => a.localeCompare(b)));
+        if (Array.isArray(amRes)) setGlobalAreaManagers([...amRes].sort((a, b) => a.localeCompare(b)));
     } catch (err) {
         console.error('Data refresh failed:', err);
         setError('Failed to refresh data.');
@@ -340,7 +382,7 @@ export default function App() {
             setError(data.error);
             setLineManagers([]);
           } else if (Array.isArray(data)) {
-            setLineManagers(data);
+            setLineManagers([...data].sort((a, b) => a.localeCompare(b)));
             setError(null);
           } else {
             setLineManagers([]);
@@ -365,7 +407,7 @@ export default function App() {
             setError(data.error);
             setAreaManagers([]);
           } else if (Array.isArray(data)) {
-            setAreaManagers(data);
+            setAreaManagers([...data].sort((a, b) => a.localeCompare(b)));
             setError(null);
           } else {
             setAreaManagers([]);
@@ -451,12 +493,15 @@ export default function App() {
         
         if (snap && !snap.exists()) {
           // Create a placeholder profile
-          const name = email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+          const name = generateNameFromEmail(email);
+          const role = getRoleFromEmail(email);
+          const dept = leadershipDirectory.find(p => p.email.toLowerCase() === email.toLowerCase())?.dept || 'HSE';
+          
           const payload = {
             email: email.toLowerCase(),
             fullName: name,
-            role: 'HSE Leadership',
-            department: 'HSE',
+            role: role,
+            department: dept,
             officeLocation: 'Head Office',
             uid: docId,
             updatedAt: new Date().toISOString()
@@ -1288,6 +1333,8 @@ export default function App() {
               </div>
             </motion.div>
 
+
+
             {/* Department Distribution */}
             {Object.keys(departmentStats).length > 0 && (
               <motion.div 
@@ -1359,11 +1406,6 @@ export default function App() {
                         <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Strategic oversight and direct field management protocols</p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                       <button className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                         Download Org Chart
-                       </button>
-                    </div>
                   </div>
                   <div className={`w-full flex items-center justify-center p-12 rounded-[2rem] border overflow-hidden relative group/logo ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover/logo:opacity-100 transition-opacity" />
@@ -1376,152 +1418,61 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                  {[
-                    {
-                      name: "Ahmed Mohamed Abbas Ahmed",
-                      role: "HSSE Manager",
-                      dept: "Department",
-                      project: "Trojan HQ",
-                      email: "ahmed.abbas@trojanholding.com",
-                      img: "https://media.licdn.com/dms/image/v2/C4D03AQG_2PVLqp894g/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1655174534836?e=1778716800&v=beta&t=CI5DMnpbVpj8ED7tFmYiPttn4-bAx-m_i1t-ymsP2Ds",
-                      gradient: "from-indigo-600 to-indigo-900"
-                    },
-                    {
-                      name: "Amal Jagadi",
-                      role: "HSE Manager",
-                      dept: "HSE Department",
-                      project: "Trojan HQ",
-                      email: "amal.j@npc.ae",
-                      img: "https://media.licdn.com/dms/image/v2/D4E03AQHdfMf-x-xIAw/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1718246131677?e=1778716800&v=beta&t=FGhvZ2Qvwc8B0J0YXo7IyJS1dCaNPbNE52n-gZwMM5s",
-                      gradient: "from-slate-800 to-slate-950"
-                    },
-                    {
-                      name: "Irshad Basha Syed",
-                      role: "Safety Engineer",
-                      dept: "NPC",
-                      project: "Zayed National Museum",
-                      id: "TG2082",
-                      email: "irshad.syed@npc.ae",
-                      gradient: "from-emerald-500 to-emerald-800"
-                    },
-                    {
-                      name: "Vidyaasree Vijayakrishnan",
-                      role: "HSE Analyst",
-                      dept: "Trojan",
-                      id: "TR101847",
-                      email: "vidyaasree.v@trojan.ae",
-                      gradient: "from-blue-600 to-blue-900"
-                    },
-                    {
-                      name: "Alshifa Najiminisa Sajeer",
-                      role: "HSE Admin",
-                      dept: "Trojan",
-                      id: "TR101838",
-                      email: "alshifa.s@trojan.ae",
-                      gradient: "from-purple-600 to-purple-900"
-                    },
-                    {
-                      name: "Alejandro Llaguno",
-                      role: "HSE Admin",
-                      dept: "Trojan",
-                      email: "alejandro.l@trojan.ae",
-                      gradient: "from-amber-500 to-amber-800"
-                    },
-                    {
-                      name: "Muhammad Shahbaz Muhammad Ilyas",
-                      role: "Safety Engineer",
-                      dept: "Trojan",
-                      email: "m.shahbaz@trojan.ae",
-                      gradient: "from-rose-600 to-rose-900"
-                    },
-                    {
-                      name: "Mohammed Razal",
-                      role: "HSE Officer",
-                      dept: "Trojan",
-                      email: "m.razal@trojan.ae",
-                      gradient: "from-cyan-600 to-cyan-900"
-                    },
-                    {
-                      name: "Elius",
-                      role: "Tech Support",
-                      dept: "Technical Assistance",
-                      project: "System Support",
-                      email: "elius.n@trojan.ae",
-                      github: "https://github.com/s6ft256",
-                      id: "TR47934",
-                      gradient: "from-violet-600 to-violet-900"
-                    }
-                  ].map((profile, i) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+
+                  {leadershipDirectory.map((profile, i) => (
                     <motion.div 
-                      key={i}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
+                      key={profile.email}
+                      initial={{ opacity: 0, y: 15 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
                       transition={{ delay: i * 0.05 }}
-                      className={`rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all group border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
+                      className={`relative group rounded-2xl overflow-hidden border transition-all duration-300 flex flex-col h-full ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:border-indigo-500/50 hover:shadow-2xl hover:shadow-indigo-500/10' : 'bg-white border-slate-100 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-500/5'}`}
                     >
-                      <div className={`h-24 bg-gradient-to-br transition-all duration-500 group-hover:h-32 ${profile.gradient}`}></div>
-                      <div className="px-5 pb-6 -mt-10 text-center relative z-10">
-                        <div className="relative inline-block mb-4">
-                          <div className="absolute inset-0 bg-white rounded-[2rem] blur-xl opacity-0 group-hover:opacity-40 transition-opacity" />
-                          {profile.img ? (
-                            <img 
-                              src={profile.img} 
-                              alt={profile.name}
-                              className="w-20 h-20 rounded-[1.5rem] object-cover border-4 border-white shadow-2xl group-hover:scale-110 group-hover:-translate-y-2 transition-all duration-500"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <div className={`w-20 h-20 rounded-[1.5rem] border-4 border-white shadow-2xl flex items-center justify-center font-display font-black text-2xl group-hover:scale-110 group-hover:-translate-y-2 transition-all duration-500 ${isDarkMode ? 'bg-slate-700 text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
+                      <div className={`h-16 bg-gradient-to-br ${i % 3 === 0 ? 'from-indigo-500 to-indigo-800' : i % 3 === 1 ? 'from-blue-500 to-blue-800' : 'from-slate-700 to-slate-950'} relative overflow-hidden flex-shrink-0`}>
+                        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent" />
+                      </div>
+                      
+                      <div className="px-4 pb-4 -mt-8 relative z-10 flex flex-col flex-grow items-center">
+                        <div className="relative mb-3">
+                          <div className={`w-14 h-14 rounded-2xl border-4 ${isDarkMode ? 'border-slate-800 bg-slate-900 shadow-xl' : 'border-white bg-white shadow-md'} overflow-hidden transition-transform group-hover:scale-105 duration-300 flex items-center justify-center`}>
+                            <div className="w-full h-full flex items-center justify-center font-display font-black text-lg text-slate-400 bg-slate-100/10 uppercase">
                               {profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                             </div>
-                          )}
-                          <div className="absolute -bottom-1 -right-1 bg-emerald-500 w-5 h-5 rounded-full border-4 border-white ring-4 ring-emerald-500/20"></div>
+                          </div>
+                          <div className="absolute -bottom-1 -right-1 bg-emerald-500 w-3.5 h-3.5 rounded-full border-2 border-white"></div>
                         </div>
                         
-                        <div className="space-y-1 mb-4">
-                          <h3 className={`font-display font-bold text-[13px] leading-tight line-clamp-1 group-hover:text-indigo-600 transition-colors ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{profile.name}</h3>
-                          <div className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
+                        <div className="text-center w-full mb-3">
+                          <h3 className={`font-display font-bold text-[11px] leading-tight line-clamp-2 mb-1 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile.name}</h3>
+                          <div className={`inline-block px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
                             {profile.role}
                           </div>
                         </div>
-                        
-                        <div className="flex justify-center mb-5">
+
+                        <div className="w-full mt-auto">
                           <a 
                             href={`mailto:${profile.email}`}
-                            className={`p-2 w-full rounded-2xl flex items-center justify-center gap-2 transition-all border group/btn bg-gradient-to-b ${isDarkMode ? 'from-slate-700 to-slate-800 border-slate-600 hover:from-indigo-600 hover:to-indigo-700 text-slate-400 hover:text-white' : 'from-slate-50 to-white border-slate-100 hover:from-white hover:to-slate-50 text-slate-500 hover:text-indigo-600 hover:shadow-lg'}`}
+                            title={profile.email}
+                            className={`w-full h-8 rounded-xl flex items-center justify-center gap-1.5 border transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-indigo-600 hover:text-white hover:border-indigo-600' : 'bg-slate-50 border-slate-100 text-slate-500 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 shadow-sm shadow-indigo-500/5'}`}
                           >
-                            <Mail className="w-4 h-4" />
-                            <span className="text-[10px] font-bold truncate max-w-[100px]">{profile.email.split('@')[0]}</span>
+                            <Mail className="w-3 h-3" />
+                            <span className="text-[10px] font-bold">Message</span>
                           </a>
                         </div>
 
-                        <div className={`space-y-2 pt-4 border-t text-left ${isDarkMode ? 'border-slate-700' : 'border-slate-50'}`}>
-                           <div className="flex items-center justify-between group/info">
-                              <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Department</span>
-                              <span className={`text-[10px] font-bold truncate max-w-[90px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.dept}</span>
-                           </div>
-                           {profile.project && 
-                             <div className="flex items-center justify-between">
-                                <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Project</span>
-                                <span className={`text-[10px] font-bold truncate max-w-[90px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.project}</span>
-                             </div>
-                           }
-                           {profile.id && 
-                             <div className="flex items-center justify-between">
-                                <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>System ID</span>
-                                <span className={`text-[10px] font-mono font-black ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{profile.id}</span>
-                             </div>
-                           }
+                        <div className="w-full mt-auto mb-4 border-t pt-3 border-slate-100/5 items-center justify-between group/info flex">
+                           <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Department</span>
+                           <span className={`text-[10px] font-bold truncate max-w-[90px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.dept}</span>
                         </div>
                       </div>
                     </motion.div>
-                  ))}
+                   ))}
                 </div>
               </div>
             </motion.div>
           )}
-           {activeTab === 'Support' && (
+          {activeTab === 'Support' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
               <div className={`bento-card ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
                 <div className={`mb-8 pb-8 border-b flex items-start justify-between ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>

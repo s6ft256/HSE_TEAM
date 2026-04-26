@@ -95,7 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (path === '/api/projects' || path === '/api/projects/') {
       if (!db) throw new Error('DB not initialized');
       const snapshot = await getDocs(collection(db, 'hse_employees'));
-      const projects = [...new Set(snapshot.docs.map(doc => doc.data().project))].filter(Boolean);
+      const projects = [...new Set(snapshot.docs.map(doc => doc.data().project))].filter(Boolean).sort();
       return res.json(projects);
     }
 
@@ -106,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const q = query(collection(db, 'hse_employees'), where('project', '==', project));
       const snapshot = await getDocs(q);
       
-      const managers = [...new Set(snapshot.docs.map(doc => doc.data().line_manager))].filter(Boolean);
+      const managers = [...new Set(snapshot.docs.map(doc => doc.data().line_manager))].filter(Boolean).sort();
       return res.json(managers);
     }
 
@@ -117,7 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const q = query(collection(db, 'hse_employees'), where('line_manager', '==', lineManager));
       const snapshot = await getDocs(q);
       
-      const managers = [...new Set(snapshot.docs.map(doc => doc.data().area_manager))].filter(Boolean);
+      const managers = [...new Set(snapshot.docs.map(doc => doc.data().area_manager))].filter(Boolean).sort();
       return res.json(managers);
     }
 
@@ -223,10 +223,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return acc;
       }, {});
 
+      const projectBreakdown = safeData.reduce((acc: any, curr: any) => {
+        if (curr.project) {
+          acc[curr.project] = (acc[curr.project] || 0) + 1;
+        }
+        return acc;
+      }, {});
+
       return res.json({
         kpiDistribution,
         qualificationBreakdown,
         designationBreakdown,
+        projectBreakdown,
         totalEmployees,
         totalProjects,
         totalLineManagers,
