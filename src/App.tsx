@@ -1134,45 +1134,45 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-gradient-to-br from-indigo-600/90 to-indigo-800/90 rounded-xl p-3 text-white relative overflow-hidden shadow-lg"
+              className="bg-gradient-to-br from-indigo-600/90 to-indigo-800/90 rounded-xl p-2.5 text-white relative overflow-hidden shadow-lg h-fit"
             >
               {/* Background Logo with Blur */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <img 
                   src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
                   alt="Trojan" 
-                  className="w-32 h-32 object-contain opacity-15 blur-sm"
+                  className="w-24 h-24 object-contain opacity-15 blur-sm"
                   referrerPolicy="no-referrer"
                 />
               </div>
               <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden backdrop-blur-sm border border-white/10">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden backdrop-blur-sm border border-white/10">
                     <img 
                       src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
                       alt="Trojan" 
-                      className="w-6 h-6 object-contain rounded"
+                      className="w-5 h-5 object-contain rounded"
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  <span className="text-[10px] font-semibold text-indigo-200 uppercase tracking-wider">Overview</span>
+                  <span className="text-[9px] font-bold text-indigo-100 uppercase tracking-wider">Overview</span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
-                    <div className="text-lg font-bold">{overviewStats.total.toLocaleString()}</div>
-                    <div className="text-[9px] text-indigo-200">Total</div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
+                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
+                    <div className="text-base font-bold">{overviewStats.total.toLocaleString()}</div>
+                    <div className="text-[8px] text-indigo-200">Total</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
-                    <div className="text-lg font-bold">{overviewStats.projects}</div>
-                    <div className="text-[9px] text-indigo-200">Projects</div>
+                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
+                    <div className="text-base font-bold">{overviewStats.projects}</div>
+                    <div className="text-[8px] text-indigo-200">Projects</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
-                    <div className="text-lg font-bold">{overviewStats.lm}</div>
-                    <div className="text-[9px] text-indigo-200">Line Mgr</div>
+                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
+                    <div className="text-base font-bold">{overviewStats.lm}</div>
+                    <div className="text-[8px] text-indigo-200">Line Mgr</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
-                    <div className="text-lg font-bold">{overviewStats.am}</div>
-                    <div className="text-[9px] text-indigo-200">Area Mgr</div>
+                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
+                    <div className="text-base font-bold">{overviewStats.am}</div>
+                    <div className="text-[8px] text-indigo-200">Area Mgr</div>
                   </div>
                 </div>
                 {/* No designation breakdown */}
