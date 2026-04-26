@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { 
   Users, 
   Briefcase, 
@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Search,
   Filter,
-  Download,
   Activity,
   Plus,
   Trash2,
@@ -24,8 +23,13 @@ import {
   Camera,
   LogIn,
   LogOut,
-  RefreshCw
+  RefreshCw,
+  FileSpreadsheet,
+  CheckCircle,
+  AlertCircle,
+  AlertTriangle
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Chart as ChartJS,
@@ -255,6 +259,9 @@ export default function App() {
   const [saveProfileLoading, setSaveProfileLoading] = useState(false);
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
+  const [pendingData, setPendingData] = useState<any>(null);
+  const [previewSheet, setPreviewSheet] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   useEffect(() => {
     fetch('/api/health')
@@ -517,76 +524,48 @@ export default function App() {
     }
   };
 
-  const handleImportEmployees = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportEmployees = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setImportLoading(true);
     
     const reader = new FileReader();
+    reader.onerror = (err) => {
+        console.error('FileReader error:', err);
+        alert('File reading failed: ' + err);
+        setImportLoading(false);
+    };
     reader.onload = async (event) => {
         try {
-            const text = (event.target?.result as string).replace(/\r/g, ''); // Fix CR LF
-            const lines = text.split('\n').filter(line => line.trim() !== '');
-            if (lines.length < 2) {
-                alert('File is empty or missing data lines');
-                return;
+            console.log('File loaded in FileReader. Event target result:', typeof event.target?.result);
+            if (!event.target?.result) {
+                throw new Error('FileReader result is empty');
             }
-            const header = lines[0].split(',').map(h => h.trim());
+            const data = new Uint8Array(event.target?.result as ArrayBuffer);
+            console.log('Data length:', data.length);
+            const workbook = XLSX.read(data, {type: 'array'});
             
-            const headerMapping: {[key: string]: string} = {
-                'SN': 'sn',
-                'Employee No.': 'employee_no',
-                'Employee Name': 'employee_name',
-                'Department': 'department',
-                'Recommended for': 'recommended_for',
-                'Date of Joining': 'date_of_joining',
-                'Designation': 'designation',
-                'Gender': 'gender',
-                'DOB': 'dob',
-                'Qualification': 'qualification',
-                'Nationality': 'nationality',
-                'Project': 'project',
-                'Line Manager': 'line_manager',
-                'TBMS Designation': 'tbms_designation',
-                'Assigned to': 'assigned_to'
+            console.log('Available sheets:', workbook.SheetNames);
+            
+            const listSheet = workbook.Sheets['List'];
+            const sheet2 = workbook.Sheets['sheet2'];
+            const sheet3 = workbook.Sheets['sheet3'];
+            
+            const pending = {
+                list: listSheet ? XLSX.utils.sheet_to_json(listSheet) : [],
+                sheet2: sheet2 ? XLSX.utils.sheet_to_json(sheet2) : [],
+                sheet3: sheet3 ? XLSX.utils.sheet_to_json(sheet3) : [],
             };
             
-            const batch = writeBatch(db);
-            let addedCount = 0;
-            let skippedCount = 0;
+            console.log('Parsed data:', pending);
             
-            // To ensure we don't add duplicates in the same batch or existing in DB
-            const existingFirestoreEmployees = new Set(allEmployees.map(e => String(e.employee_no)));
-            const newBatchEmployees = new Set();
-            
-            for (let i = 1; i < lines.length; i++) {
-               const row = lines[i].split(',').map(v => v.trim());
-               if (row.length < header.length) {
-                   continue;
-               }
-               
-               const employee: any = {};
-               header.forEach((h, index) => {
-                   const fieldName = headerMapping[h] || h.toLowerCase().replace(/ /g, '_');
-                   employee[fieldName] = row[index];
-               });
-               
-               if (employee.employee_no) {
-                   const empNo = String(employee.employee_no);
-                   // Check if in DB
-                   if (existingFirestoreEmployees.has(empNo) || newBatchEmployees.has(empNo)) {
-                       skippedCount++;
-                       continue;
-                   }
-                   
-                   newBatchEmployees.add(empNo);
-                   const docRef = doc(db, 'hse_employees', empNo);
-                   batch.set(docRef, employee, { merge: true });
-                   addedCount++;
-               }
+            if (pending.list.length === 0 && pending.sheet2.length === 0 && pending.sheet3.length === 0) {
+                alert(`No data found. Available sheets in file: ${workbook.SheetNames.join(', ')}`);
+                return;
             }
-            if (addedCount > 0) await batch.commit();
-            alert(`Import complete! Added: ${addedCount}, Skipped (existing or duplicate in file): ${skippedCount}`);
+
+            setPendingData(pending);
+            alert('File parsed successfully! You should see the preview section now.');
         } catch (err: any) {
             console.error('Import error:', err);
             alert('Import failed: ' + err.message);
@@ -594,7 +573,52 @@ export default function App() {
             setImportLoading(false);
         }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleProceedImport = async () => {
+    if (!pendingData) return;
+    setImportLoading(true);
+    try {
+        const batch = writeBatch(db);
+        
+        if (pendingData.list) {
+            const seenEmployeeNos = new Set();
+            for (const emp of pendingData.list as any[]) {
+                if (emp.employee_no) {
+                    const empNo = String(emp.employee_no);
+                    if (seenEmployeeNos.has(empNo)) continue;
+                    
+                    seenEmployeeNos.add(empNo);
+                    const docRef = doc(db, 'hse_employees', empNo);
+                    batch.set(docRef, emp, { merge: true });
+                }
+            }
+        }
+        if (pendingData.sheet2) {
+            for (const row of pendingData.sheet2 as any[]) {
+                const colRef = collection(db, 'sheet2_data');
+                const docRef = doc(colRef);
+                batch.set(docRef, row, { merge: true });
+            }
+        }
+        if (pendingData.sheet3) {
+            for (const row of pendingData.sheet3 as any[]) {
+                const colRef = collection(db, 'sheet3_data');
+                const docRef = doc(colRef);
+                batch.set(docRef, row, { merge: true });
+            }
+        }
+        
+        await batch.commit();
+        setImportStatus({ type: 'success', message: 'Import complete for List, sheet2, and sheet3!' });
+        setPendingData(null);
+    } catch (err: any) {
+        console.error('Import error:', err);
+        setImportStatus({ type: 'error', message: 'Import failed: ' + err.message });
+    } finally {
+        setImportLoading(false);
+    }
   };
 
   const handleSaveEmployee = async (e: FormEvent) => {
@@ -749,7 +773,7 @@ export default function App() {
           {activeTab === 'Dashboard' && (
             <>
               {/* Filter Section - STICKY */}
-              <section className={`p-4 rounded-xl shadow-sm border flex flex-col md:flex-row items-end gap-4 sticky top-0 z-40 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <section className={`p-4 rounded-xl shadow-sm border flex flex-col md:flex-row items-end gap-4 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="flex-1 w-full space-y-1.5">
                   <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                     <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
@@ -1110,45 +1134,45 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-gradient-to-br from-indigo-600/90 to-indigo-800/90 rounded-xl p-4 text-white relative overflow-hidden shadow-lg"
+              className="bg-gradient-to-br from-indigo-600/90 to-indigo-800/90 rounded-xl p-3 text-white relative overflow-hidden shadow-lg"
             >
               {/* Background Logo with Blur */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <img 
                   src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
                   alt="Trojan" 
-                  className="w-48 h-48 object-contain opacity-15 blur-sm"
+                  className="w-32 h-32 object-contain opacity-15 blur-sm"
                   referrerPolicy="no-referrer"
                 />
               </div>
               <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden backdrop-blur-sm border border-white/10">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden backdrop-blur-sm border border-white/10">
                     <img 
                       src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
                       alt="Trojan" 
-                      className="w-8 h-8 object-contain rounded"
+                      className="w-6 h-6 object-contain rounded"
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  <span className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Overview</span>
+                  <span className="text-[10px] font-semibold text-indigo-200 uppercase tracking-wider">Overview</span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{overviewStats.total.toLocaleString()}</div>
-                    <div className="text-[10px] text-indigo-200">Total Employees</div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                    <div className="text-lg font-bold">{overviewStats.total.toLocaleString()}</div>
+                    <div className="text-[9px] text-indigo-200">Total</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{overviewStats.projects}</div>
-                    <div className="text-[10px] text-indigo-200">Projects</div>
+                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                    <div className="text-lg font-bold">{overviewStats.projects}</div>
+                    <div className="text-[9px] text-indigo-200">Projects</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{overviewStats.lm}</div>
-                    <div className="text-[10px] text-indigo-200">Line Managers</div>
+                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                    <div className="text-lg font-bold">{overviewStats.lm}</div>
+                    <div className="text-[9px] text-indigo-200">Line Mgr</div>
                   </div>
-                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{overviewStats.am}</div>
-                    <div className="text-[10px] text-indigo-200">Area Managers</div>
+                  <div className="bg-white/10 rounded-lg p-2 backdrop-blur-sm">
+                    <div className="text-lg font-bold">{overviewStats.am}</div>
+                    <div className="text-[9px] text-indigo-200">Area Mgr</div>
                   </div>
                 </div>
                 {/* No designation breakdown */}
@@ -1554,6 +1578,7 @@ export default function App() {
                         </div>
                       </button>
                     </div>
+
                   </div>
                 ) : (
                   <div className="space-y-8">
@@ -1745,8 +1770,16 @@ export default function App() {
                             placeholder="Search for employee to manage..."
                             value={adminSearchTerm}
                             onChange={(e) => setAdminSearchTerm(e.target.value)}
-                            className={`w-full rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-slate-50 border-slate-200'}`}
+                            className={`w-full rounded-lg pl-9 pr-10 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-slate-50 border-slate-200'}`}
                           />
+                          {adminSearchTerm && (
+                            <button 
+                              onClick={() => setAdminSearchTerm('')}
+                              className={`absolute right-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                         <button 
                           onClick={() => {
@@ -1757,29 +1790,17 @@ export default function App() {
                         >
                           <Plus className="w-4 h-4" /> Add New Employee
                         </button>
-                        <div className="relative w-full sm:w-auto">
-                            <input 
-                              type="file" 
-                              accept=".csv"
-                              onChange={handleImportEmployees}
-                              className="hidden"
-                              id="csv-upload"
-                            />
-                            <div className="flex flex-col gap-1">
-                                <label 
-                                    htmlFor="csv-upload"
-                                    className="cursor-pointer w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
-                                >
-                                    {importLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                                    {importLoading ? 'Importing...' : 'Import CSV'}
-                                </label>
-                                <span className="text-[9px] text-slate-400">Required headers: employee_no, employee_name, ...</span>
-                            </div>
-                        </div>
+
                       </div>
 
                       {/* Admin Search Results */}
-                      {adminSearchResults.length > 0 && (
+                      {adminSearchTerm.length >= 2 && (
+                        <div className={`text-xs mb-3 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                          Searching for: <span className="font-bold">"{adminSearchTerm}"</span>
+                        </div>
+                      )}
+
+                      {adminSearchResults.length > 0 ? (
                         <div className="space-y-3 mt-4">
                           {/* Bulk Actions Panel */}
                           {selectedEmployeeIds.size > 0 && (
@@ -1814,7 +1835,7 @@ export default function App() {
                             </div>
                           )}
 
-                          <h4 className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Search Results</h4>
+                          <h4 className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Search Results ({adminSearchResults.length})</h4>
                           <div className="grid grid-cols-1 gap-2">
                             {adminSearchResults.map(emp => (
                               <div key={emp.id || emp.employee_no} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 hover:border-indigo-200 shadow-sm'}`}>
@@ -1865,13 +1886,173 @@ export default function App() {
                             ))}
                           </div>
                         </div>
-                      )}
-                      
-                      {adminSearchTerm.length >= 2 && adminSearchResults.length === 0 && (
+                      ) : adminSearchTerm.length >= 2 ? (
                         <div className="py-4 text-center text-xs italic text-slate-400">
                           No employees found matching "{adminSearchTerm}"
                         </div>
-                      )}
+                      ) : null}
+                    </div>
+
+                    {/* Data Management - Excel Import */}
+                    <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-indigo-50/30 border-indigo-100'}`}>
+                        <div className="flex items-center justify-between mb-6">
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-emerald-900/30' : 'bg-emerald-100'}`}>
+                              <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                            </div>
+                            <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Data Management (Excel Import)</h3>
+                          </div>
+                          {importStatus && (
+                            <button 
+                              onClick={() => setImportStatus(null)}
+                              className={`text-[10px] px-2 py-1 rounded ${importStatus.type === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}
+                            >
+                              Dismiss {importStatus.type === 'success' ? 'Success' : 'Error'}
+                            </button>
+                          )}
+                        </div>
+
+                        {importStatus && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`mb-6 p-4 rounded-xl flex items-start gap-3 ${
+                              importStatus.type === 'success' 
+                                ? isDarkMode ? 'bg-emerald-900/20 text-emerald-400 border border-emerald-800/50' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                : isDarkMode ? 'bg-red-900/20 text-red-400 border border-red-800/50' : 'bg-red-50 text-red-700 border border-red-100'
+                            }`}
+                          >
+                            {importStatus.type === 'success' ? <CheckCircle className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
+                            <div className="text-sm font-medium">{importStatus.message}</div>
+                          </motion.div>
+                        )}
+
+                        {pendingData ? (
+                            <div className={`p-6 rounded-xl border-2 border-indigo-200 ${isDarkMode ? 'bg-slate-800 border-indigo-900/50' : 'bg-white shadow-xl shadow-indigo-100'}`}>
+                                <h4 className="font-bold mb-4 flex items-center gap-2">
+                                  <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                                  Import Preview
+                                </h4>
+                                <div className="grid grid-cols-3 gap-4 mb-6">
+                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">List Sheet</div>
+                                        <div className="text-xl font-bold">{pendingData.list?.length || 0}</div>
+                                    </div>
+                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Sheet2</div>
+                                        <div className="text-xl font-bold">{pendingData.sheet2?.length || 0}</div>
+                                    </div>
+                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Sheet3</div>
+                                        <div className="text-xl font-bold">{pendingData.sheet3?.length || 0}</div>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                  {['list', 'sheet2', 'sheet3'].map(sheet => (
+                                    <button
+                                      key={sheet}
+                                      onClick={() => setPreviewSheet(previewSheet === sheet ? null : sheet)}
+                                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                        previewSheet === sheet 
+                                          ? 'bg-indigo-600 text-white shadow-md' 
+                                          : isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-white border border-slate-200 text-slate-600 hover:border-indigo-300'
+                                      }`}
+                                    >
+                                      {previewSheet === sheet ? 'Hide Preview' : `Preview ${sheet.toUpperCase()}`}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <AnimatePresence>
+                                  {previewSheet && pendingData[previewSheet]?.length > 0 && (
+                                    <motion.div 
+                                      initial={{ opacity: 0, height: 0 }}
+                                      animate={{ opacity: 1, height: 'auto' }}
+                                      exit={{ opacity: 0, height: 0 }}
+                                      className={`overflow-hidden mb-6`}
+                                    >
+                                      <div className={`max-h-60 overflow-auto border rounded-lg p-1 text-[10px] shadow-inner ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                                        <table className="w-full border-collapse">
+                                          <thead className="sticky top-0 bg-inherit shadow-sm">
+                                            <tr>
+                                              {Object.keys(pendingData[previewSheet][0]).map(key => (
+                                                <th key={key} className="text-left font-bold border-b p-2 whitespace-nowrap bg-indigo-50/50 uppercase tracking-tighter">{key}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {pendingData[previewSheet].slice(0, 5).map((row: any, idx: number) => (
+                                              <tr key={idx} className="hover:bg-indigo-50/20">
+                                                {Object.values(row).map((val: any, vIdx: number) => (
+                                                  <td key={vIdx} className="border-b p-2 opacity-80">{String(val)}</td>
+                                                ))}
+                                              </tr>
+                                            ))}
+                                            {pendingData[previewSheet].length > 5 && (
+                                              <tr>
+                                                <td colSpan={100} className="p-2 text-center text-slate-400 italic">
+                                                  And {pendingData[previewSheet].length - 5} more records...
+                                                </td>
+                                              </tr>
+                                            )}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+
+                                <div className="flex gap-3 pt-4 border-t border-slate-100">
+                                    <button 
+                                        onClick={handleProceedImport}
+                                        disabled={importLoading}
+                                        className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all disabled:opacity-50"
+                                    >
+                                        {importLoading ? (
+                                          <RefreshCw className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                          <ShieldCheck className="w-4 h-4" />
+                                        )}
+                                        {importLoading ? 'Importing...' : 'Proceed with Final Import'}
+                                    </button>
+                                    <button 
+                                        onClick={() => { setPendingData(null); setPreviewSheet(null); }}
+                                        className={`px-6 py-3 rounded-xl text-sm font-bold transition-all ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                          <div className={`relative group p-8 rounded-2xl border-2 border-dashed transition-all ${
+                            isDarkMode 
+                              ? 'bg-slate-800/50 border-slate-700 hover:border-indigo-500/50' 
+                              : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-50'
+                          }`}>
+                              <input
+                                  type="file"
+                                  onChange={handleImportEmployees}
+                                  disabled={importLoading}
+                                  className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                  accept=".xlsx"
+                              />
+                              <div className="flex flex-col items-center justify-center text-center">
+                                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110 ${isDarkMode ? 'bg-indigo-900/30' : 'bg-indigo-50'}`}>
+                                    <FileSpreadsheet className={`w-8 h-8 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                                  </div>
+                                  <div className={`text-lg font-bold mb-1 ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>
+                                      {importLoading ? 'Reading File...' : 'Upload Excel Data File'}
+                                  </div>
+                                  <p className={`text-sm max-w-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                      Select <span className="font-mono text-indigo-500 font-bold">data.xlsx</span> to import employee List, sheet2, and sheet3.
+                                  </p>
+                                  <div className="mt-6 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold ring-4 ring-indigo-50/50">
+                                    Click or Drag & Drop
+                                  </div>
+                              </div>
+                          </div>
+                        )}
                     </div>
                   </div>
                 )}
