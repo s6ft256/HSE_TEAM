@@ -1,6 +1,6 @@
 {
-  "name": "Workforce Analytics Dashboard",
-  "description": "A hierarchical employee and KPI data visualization tool using Supabase as a backend database.",
+  "name": "Trojan Performance Hub",
+  "description": "Comprehensive workforce performance analytics and HSE leadership network hub for Trojan Construction Group.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

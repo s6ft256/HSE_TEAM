@@ -25,6 +25,7 @@ import {
   LogOut,
   RefreshCw,
   FileSpreadsheet,
+  Headset,
   CheckCircle,
   AlertCircle,
   AlertTriangle
@@ -263,59 +264,45 @@ export default function App() {
   const [previewSheet, setPreviewSheet] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  useEffect(() => {
-    fetch('/api/health')
-      .then(res => res.json())
-      .then(data => setFirebaseStatus(data))
-      .catch(err => console.error('Health check failed:', err));
+  const [refreshing, setRefreshing] = useState(false);
 
-    fetch('/api/projects')
-      .then(res => res.json())
-      .then(data => {
-        if (data.error) {
-          setError(data.error);
+  const loadData = async () => {
+    setRefreshing(true);
+    try {
+        const [healthRes, projectsRes, statsRes, lmRes, amRes] = await Promise.all([
+          fetch('/api/health').then(res => res.json()).catch(() => null),
+          fetch('/api/projects').then(res => res.json()).catch(() => ({ error: 'Fetch failed' })),
+          fetch('/api/stats').then(res => res.json()).catch(() => null),
+          fetch('/api/line-managers').then(res => res.json()).catch(() => []),
+          fetch('/api/area-managers').then(res => res.json()).catch(() => [])
+        ]);
+
+        if (healthRes) setFirebaseStatus(healthRes);
+
+        if (projectsRes.error) {
+          setError(projectsRes.error);
           setProjects([]);
-        } else if (Array.isArray(data)) {
-          setProjects(data);
+        } else if (Array.isArray(projectsRes)) {
+          setProjects(projectsRes);
           setError(null);
-        } else {
-          setProjects([]);
         }
-      })
-      .catch(err => {
-        console.error('Projects fetch error:', err);
-        setError('Connection failed. Please check your Supabase secrets.');
-      });
-    
-    fetch('/api/stats')
-      .then(res => res.json())
-      .then(data => {
-        if (data && !data.error) {
-          setStats(data);
-        } else if (data && data.error) {
-          console.warn('Stats API reported error:', data.error);
-        }
-      })
-      .catch(err => console.error('Stats fetch error:', err));
 
-    // Fetch global line managers and area managers for Overview card
-    fetch('/api/line-managers')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setGlobalLineManagers(data);
+        if (statsRes && !statsRes.error) {
+          setStats(statsRes);
         }
-      })
-      .catch(err => console.error('Global line managers fetch error:', err));
 
-    fetch('/api/area-managers')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setGlobalAreaManagers(data);
-        }
-      })
-      .catch(err => console.error('Global area managers fetch error:', err));
+        if (Array.isArray(lmRes)) setGlobalLineManagers(lmRes);
+        if (Array.isArray(amRes)) setGlobalAreaManagers(amRes);
+    } catch (err) {
+        console.error('Data refresh failed:', err);
+        setError('Failed to refresh data.');
+    } finally {
+        setTimeout(() => setRefreshing(false), 500);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   useEffect(() => {
@@ -767,7 +754,7 @@ export default function App() {
                   onClick={() => setActiveTab(tab)}
                   className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
                     activeTab === tab 
-                      ? isDarkMode ? 'bg-slate-600 text-indigo-400 shadow-sm' : 'bg-white text-indigo-600 shadow-sm'
+                      ? isDarkMode ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-900/40' : 'bg-white text-indigo-600 shadow-sm'
                       : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
@@ -777,6 +764,21 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
+                <button 
+                  onClick={loadData}
+                  disabled={refreshing}
+                  className={`p-2 rounded-lg transition-all ${isDarkMode ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'} relative`}
+                  title="Refresh Data"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                  {refreshing && (
+                    <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                    </span>
+                  )}
+                </button>
+
                 <button 
                   onClick={() => setIsDarkMode(!isDarkMode)}
                   className={`p-2 rounded-lg transition-all ${isDarkMode ? 'bg-slate-700 text-yellow-400 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
@@ -793,10 +795,10 @@ export default function App() {
           {activeTab === 'Dashboard' && (
             <>
               {/* Filter Section - STICKY */}
-              <section className={`p-4 rounded-xl shadow-sm border flex flex-col md:flex-row items-end gap-4 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <section className={`p-4 rounded-2xl shadow-sm border flex flex-col md:flex-row items-end gap-4 glass-morphism ${isDarkMode ? 'border-slate-700 shadow-slate-950/20' : 'border-slate-200 shadow-slate-200/50'}`}>
                 <div className="flex-1 w-full space-y-1.5">
                   <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50/50'}`}>
                       <Briefcase className="w-3 h-3 text-indigo-500" />
                     </div>
                     Project
@@ -813,7 +815,7 @@ export default function App() {
 
                 <div className="flex-1 w-full space-y-1.5">
                   <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-emerald-900/50' : 'bg-emerald-50'}`}>
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-emerald-900/50' : 'bg-emerald-50/50'}`}>
                       <Users className="w-3 h-3 text-emerald-500" />
                     </div>
                     Line Manager
@@ -831,7 +833,7 @@ export default function App() {
 
                 <div className="flex-1 w-full space-y-1.5">
                   <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-amber-900/50' : 'bg-amber-50'}`}>
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-amber-900/50' : 'bg-amber-50/50'}`}>
                       <MapPin className="w-3 h-3 text-amber-500" />
                     </div>
                     Area Manager
@@ -847,7 +849,7 @@ export default function App() {
                   </select>
                 </div>
                 
-                <div className={`w-10 h-10 flex items-center justify-center rounded-lg border cursor-pointer transition-colors ${isDarkMode ? 'bg-slate-700 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
+                <div className={`w-10 h-10 flex items-center justify-center rounded-xl border cursor-pointer transition-all active:scale-95 ${isDarkMode ? 'bg-slate-700/50 border-slate-600 hover:bg-slate-600' : 'bg-slate-50 border-slate-200 hover:bg-white hover:shadow-md'}`}>
                   <Filter className={`w-4 h-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
                 </div>
               </section>
@@ -858,16 +860,17 @@ export default function App() {
             {/* Line Manager Selection */}
             {lineManagers.length > 0 && (
               <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-gradient-to-br from-indigo-50 to-white p-4 rounded-xl border border-indigo-100"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className={`bento-card relative overflow-hidden group ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center">
-                    <Users className="w-3.5 h-3.5 text-indigo-600" />
+                <div className={`absolute top-0 left-0 w-1 h-full bg-indigo-500`} />
+                <div className="flex items-center gap-2 mb-4">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
+                    <Users className="w-4 h-4 text-indigo-500" />
                   </div>
-                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Line Managers <span className="text-indigo-600 font-normal">• {selectedProject}</span>
+                  <h3 className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                    Line Managers <span className="text-indigo-500 font-normal opacity-60">• {selectedProject}</span>
                   </h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -875,10 +878,10 @@ export default function App() {
                     <button
                       key={manager}
                       onClick={() => setSelectedLineManager(manager)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all transform active:scale-95 ${
                         selectedLineManager === manager
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'bg-white text-slate-600 hover:bg-indigo-50 border border-slate-200'
+                          ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30'
+                          : isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-50 text-slate-600 hover:bg-white hover:shadow-md border border-slate-100 hover:border-indigo-200'
                       }`}
                     >
                       {manager}
@@ -891,17 +894,18 @@ export default function App() {
             {/* Area Manager Selection */}
             {selectedLineManager && areaManagers.length > 0 && (
               <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.1 }}
-                className="bg-gradient-to-br from-emerald-50 to-white p-4 rounded-xl border border-emerald-100"
+                className={`bento-card relative overflow-hidden group ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center">
-                    <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                <div className={`absolute top-0 left-0 w-1 h-full bg-emerald-500`} />
+                <div className="flex items-center gap-2 mb-4">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-emerald-900/50' : 'bg-emerald-50'}`}>
+                    <MapPin className="w-4 h-4 text-emerald-500" />
                   </div>
-                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Area Managers <span className="text-emerald-600 font-normal">• {selectedLineManager}</span>
+                  <h3 className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                    Area Managers <span className="text-emerald-500 font-normal opacity-60">• {selectedLineManager}</span>
                   </h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -909,10 +913,10 @@ export default function App() {
                     <button
                       key={manager}
                       onClick={() => setSelectedAreaManager(manager)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all transform active:scale-95 ${
                         selectedAreaManager === manager
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'bg-white text-slate-600 hover:bg-emerald-50 border border-slate-200'
+                          ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                          : isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-50 text-slate-600 hover:bg-white hover:shadow-md border border-slate-100 hover:border-emerald-200'
                       }`}
                     >
                       {manager}
@@ -937,53 +941,81 @@ export default function App() {
                   initial={{ opacity: 0, y: -20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
-                  className="bg-white rounded-2xl shadow-lg border-2 border-indigo-500 overflow-hidden"
+                  className={`rounded-2xl shadow-2xl overflow-hidden border-2 border-indigo-500 glass-morphism ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
                 >
-                  <div className="bg-indigo-600 px-6 py-4 text-white flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-white/20 p-2 rounded-lg">
-                        <Users className="w-5 h-5" />
+                  <div className="bg-indigo-600 px-8 py-5 text-white flex justify-between items-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 to-indigo-800" />
+                    <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
+                    <div className="flex items-center gap-4 relative z-10">
+                      <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md">
+                        <Users className="w-6 h-6" />
                       </div>
                       <div>
-                        <div className="text-[10px] font-bold uppercase tracking-widest opacity-80">Direct Match Found</div>
-                        <h3 className="text-lg font-bold">Employee Full Profile</h3>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.2em] opacity-70">Direct Match Found</div>
+                        <h3 className="text-xl font-display font-bold">Employee Full Profile</h3>
                       </div>
                     </div>
-                    <div className="text-xs font-mono bg-white/10 px-2 py-1 rounded">
+                    <div className="text-xs font-mono font-bold bg-white/10 px-3 py-1.5 rounded-xl backdrop-blur-md border border-white/10 relative z-10">
                       {exactMatch.employee_no}
                     </div>
                   </div>
                   
-                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     <div className="space-y-4">
                       <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Basic Information</div>
-                        <div className="space-y-2">
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Name:</span> <span className="font-bold text-slate-800">{exactMatch.employee_name}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Gender:</span> <span className="font-bold text-slate-800">{exactMatch.gender}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Nationality:</span> <span className="font-bold text-slate-800">{exactMatch.nationality}</span></p>
+                        <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <User className="w-3 h-3" /> Basic Information
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase">Full Name</span>
+                            <span className={`font-bold text-base ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{exactMatch.employee_name}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase">Gender / Nationality</span>
+                            <span className={`font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{exactMatch.gender} • {exactMatch.nationality}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
 
                     <div className="space-y-4">
                       <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Professional Details</div>
-                        <div className="space-y-2">
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Department:</span> <span className="font-bold text-slate-800">{exactMatch.department}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Designation:</span> <span className="font-bold text-slate-800">{exactMatch.designation}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Level:</span> <span className="font-bold text-slate-800">{exactMatch.level}</span></p>
+                        <div className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <Briefcase className="w-3 h-3" /> Professional Details
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase">Department</span>
+                            <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{exactMatch.department}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase">Designation</span>
+                            <span className={`font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{exactMatch.designation} (Level {exactMatch.level})</span>
+                          </div>
                         </div>
                       </div>
                     </div>
 
                     <div className="space-y-4">
                       <div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Assignment & Management</div>
-                        <div className="space-y-2">
-                          <p className="text-sm truncate"><span className="text-slate-500 font-medium">Project:</span> <span className="font-bold text-slate-800">{exactMatch.project}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">Line Manager:</span> <span className="font-bold text-slate-800">{exactMatch.line_manager}</span></p>
-                          <p className="text-sm"><span className="text-slate-500 font-medium">KPI Score:</span> <span className="font-bold text-indigo-600">{exactMatch.kpi}%</span></p>
+                        <div className="text-[10px] font-bold text-amber-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <ShieldCheck className="w-3 h-3" /> Performance & Reporting
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase">Project Assignment</span>
+                            <span className={`font-bold truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`} title={exactMatch.project}>{exactMatch.project}</span>
+                          </div>
+                          <div className="flex items-center justify-between p-3 rounded-2xl bg-indigo-50/50 border border-indigo-100/50">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] text-indigo-500 font-bold uppercase">KPI Score</span>
+                              <span className="text-xl font-display font-black text-indigo-600">{exactMatch.kpi}%</span>
+                            </div>
+                            <div className="w-12 h-12 rounded-full border-4 border-indigo-100 flex items-center justify-center">
+                              <div className="text-[10px] font-black text-indigo-400">Score</div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -992,8 +1024,8 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            <div className={`rounded-xl border shadow-sm flex flex-col min-h-[500px] max-h-[600px] ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 flex-shrink-0 p-5">
+            <div className={`bento-card flex flex-col min-h-[500px] max-h-[600px] ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 flex-shrink-0">
                 <div>
                   <h2 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Employee Performance Roster</h2>
                   <div className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>
@@ -1154,48 +1186,52 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-gradient-to-br from-indigo-600/90 to-indigo-800/90 rounded-xl p-2.5 text-white relative overflow-hidden shadow-lg h-fit"
+              className="relative overflow-hidden group shadow-2xl rounded-3xl"
             >
-              {/* Background Logo with Blur */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <img 
-                  src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
-                  alt="Trojan" 
-                  className="w-24 h-24 object-contain opacity-15 blur-sm"
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center overflow-hidden backdrop-blur-sm border border-white/10">
-                    <img 
-                      src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
-                      alt="Trojan" 
-                      className="w-5 h-5 object-contain rounded"
-                      referrerPolicy="no-referrer"
-                    />
+              {/* Animated Background Gradients */}
+              <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-indigo-700 to-indigo-900" />
+              <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full -mr-12 -mt-12 blur-3xl animate-pulse" />
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-400/20 rounded-full -ml-8 -mb-8 blur-2xl" />
+
+              <div className="relative z-10 p-6 flex flex-col gap-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center backdrop-blur-xl border border-white/20 overflow-hidden shadow-inner">
+                      <img 
+                        src="https://media.licdn.com/dms/image/v2/D4D0BAQEQEl1DLgh1LQ/company-logo_200_200/B4DZ12BoSDLQAI-/0/1775801632458/trojanconstructiongroup_logo?e=2147483647&v=beta&t=0usctUmO-DibcIv8aqWULOCkmIbnchhXs6HPh8prAi8" 
+                        alt="Trojan" 
+                        className="w-7 h-7 object-contain"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-100/70">Performance Hub</h4>
+                      <h3 className="text-sm font-display font-bold text-white tracking-tight">Organization Overview</h3>
+                    </div>
                   </div>
-                  <span className="text-[9px] font-bold text-indigo-100 uppercase tracking-wider">Overview</span>
-                </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5">
-                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
-                    <div className="text-base font-bold">{overviewStats.total.toLocaleString()}</div>
-                    <div className="text-[8px] text-indigo-200">Total</div>
-                  </div>
-                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
-                    <div className="text-base font-bold">{overviewStats.projects}</div>
-                    <div className="text-[8px] text-indigo-200">Projects</div>
-                  </div>
-                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
-                    <div className="text-base font-bold">{overviewStats.lm}</div>
-                    <div className="text-[8px] text-indigo-200">Line Mgr</div>
-                  </div>
-                  <div className="bg-white/10 rounded-lg p-1.5 backdrop-blur-sm">
-                    <div className="text-base font-bold">{overviewStats.am}</div>
-                    <div className="text-[8px] text-indigo-200">Area Mgr</div>
+                  <div className="bg-white/10 px-2 py-1 rounded-lg backdrop-blur-md border border-white/10">
+                    <Activity className="w-3.5 h-3.5 text-indigo-200" />
                   </div>
                 </div>
-                {/* No designation breakdown */}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-sm group-hover:bg-white/15 transition-colors">
+                    <div className="text-2xl font-display font-black text-white">{overviewStats.total.toLocaleString()}</div>
+                    <div className="text-[10px] font-bold text-indigo-100/70 uppercase tracking-widest mt-1">Total Staff</div>
+                  </div>
+                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-sm group-hover:bg-white/15 transition-colors">
+                    <div className="text-2xl font-display font-black text-white">{overviewStats.projects}</div>
+                    <div className="text-[10px] font-bold text-indigo-100/70 uppercase tracking-widest mt-1">Active Projects</div>
+                  </div>
+                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-sm group-hover:bg-white/15 transition-colors text-emerald-100">
+                    <div className="text-2xl font-display font-black text-white">{overviewStats.lm}</div>
+                    <div className="text-[10px] font-bold text-indigo-100/70 uppercase tracking-widest mt-1">Line Mgrs</div>
+                  </div>
+                  <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-sm group-hover:bg-white/15 transition-colors text-amber-100">
+                    <div className="text-2xl font-display font-black text-white">{overviewStats.am}</div>
+                    <div className="text-[10px] font-bold text-indigo-100/70 uppercase tracking-widest mt-1">Area Mgrs</div>
+                  </div>
+                </div>
               </div>
             </motion.div>
 
@@ -1205,39 +1241,37 @@ export default function App() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.2 }}
-                className={`rounded-xl p-5 shadow-sm border flex flex-col h-[280px] ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}
+                className={`bento-card flex flex-col h-[320px] ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
               >
-                <h3 className={`text-xs font-bold uppercase tracking-widest mb-4 flex items-center gap-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  <Users className="w-3.5 h-3.5 text-indigo-500" /> Department Distribution
-                </h3>
-                <div className="flex-1">
-                  <div className="space-y-2">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className={`text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <Users className="w-4 h-4 text-indigo-500" /> Department Mix
+                  </h3>
+                  <div className="text-[10px] font-bold text-slate-400">Top 5</div>
+                </div>
+                <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="space-y-3">
                     {Object.entries(departmentStats)
                       .sort(([,a], [,b]) => (b as number) - (a as number))
+                      .slice(0, 8)
                       .map(([dept, count], index) => (
-                        <div key={dept} className={`flex items-center justify-between p-2 rounded-lg ${isDarkMode ? 'bg-slate-700/50' : 'bg-slate-50'}`}>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${
-                              index === 0 ? 'bg-indigo-500' :
-                              index === 1 ? 'bg-emerald-500' :
-                              index === 2 ? 'bg-amber-500' :
-                              'bg-slate-400'
-                            }`} />
-                            <span className={`text-sm font-medium truncate max-w-[140px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{dept}</span>
+                        <div key={dept} className="space-y-1.5 group cursor-default">
+                          <div className="flex items-center justify-between">
+                            <span className={`text-[11px] font-bold truncate max-w-[170px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{dept}</span>
+                            <span className={`text-[11px] font-black ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{count}</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <div className={`w-16 h-1.5 rounded-full overflow-hidden ${isDarkMode ? 'bg-slate-600' : 'bg-slate-200'}`}>
-                              <div 
-                                className={`h-full rounded-full ${
-                                  index === 0 ? 'bg-indigo-500' :
-                                  index === 1 ? 'bg-emerald-500' :
-                                  index === 2 ? 'bg-amber-500' :
-                                  'bg-slate-400'
-                                }`}
-                                style={{ width: `${(Math.max(...Object.values(departmentStats) as number[]) > 0 ? (((count as number) / Math.max(...Object.values(departmentStats) as number[])) * 100) : 0)}%` }}
-                              />
-                            </div>
-                            <span className={`text-sm font-bold w-8 text-right ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{count}</span>
+                          <div className={`w-full h-1.5 rounded-full overflow-hidden ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(Math.max(...Object.values(departmentStats) as number[]) > 0 ? (((count as number) / Math.max(...Object.values(departmentStats) as number[])) * 100) : 0)}%` }}
+                              transition={{ duration: 0.8, delay: 0.3 + (index * 0.05) }}
+                              className={`h-full rounded-full bg-gradient-to-r ${
+                                index === 0 ? 'from-indigo-500 to-indigo-600 shadow-sm shadow-indigo-500/30' :
+                                index === 1 ? 'from-emerald-500 to-emerald-600 shadow-sm shadow-emerald-500/30' :
+                                index === 2 ? 'from-amber-500 to-amber-600 shadow-sm shadow-amber-500/30' :
+                                'from-slate-400 to-slate-500'
+                              }`}
+                            />
                           </div>
                         </div>
                       ))}
@@ -1249,30 +1283,47 @@ export default function App() {
           </div>
         </div>
       </>
-    )}
-
+          )}
           {activeTab === 'Documentation' && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className={`rounded-xl p-5 shadow-sm border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div className={`mb-8 pb-6 border-b flex flex-col gap-6 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }} 
+              animate={{ opacity: 1, y: 0 }} 
+              className="space-y-8"
+            >
+              <div className={`bento-card relative overflow-hidden ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                {/* Background Decorations */}
+                <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/5 rounded-full -mr-32 -mt-32 blur-3xl" />
+                <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/5 rounded-full -ml-24 -mb-24 blur-3xl" />
+
+                <div className={`relative z-10 mb-10 pb-8 border-b flex flex-col gap-8 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
+                        <ShieldCheck className="w-8 h-8 text-indigo-500" />
+                      </div>
                       <div>
-                        <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE Leadership & Documentation</h2>
+                        <h2 className={`text-2xl font-display font-black tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE Leadership Network</h2>
+                        <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Strategic oversight and direct field management protocols</p>
                       </div>
                     </div>
+                    <div className="flex gap-2">
+                       <button className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                         Download Org Chart
+                       </button>
+                    </div>
                   </div>
-                  <div className={`w-full flex items-center justify-center p-6 rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                  <div className={`w-full flex items-center justify-center p-12 rounded-[2rem] border overflow-hidden relative group/logo ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover/logo:opacity-100 transition-opacity" />
                     <img 
                       src="https://procurement.trojanholding.ae/Styles/Images/trojanconstructiongroupalllogo.png" 
                       alt="Trojan Construction Group" 
-                      className="w-full max-w-2xl h-auto object-contain"
+                      className="w-full max-w-3xl h-auto object-contain relative z-10 drop-shadow-2xl group-hover:scale-[1.02] transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                   {[
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
@@ -1281,7 +1332,7 @@ export default function App() {
                       project: "Trojan HQ",
                       email: "ahmed.abbas@trojanholding.com",
                       img: "https://media.licdn.com/dms/image/v2/C4D03AQG_2PVLqp894g/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1655174534836?e=1778716800&v=beta&t=CI5DMnpbVpj8ED7tFmYiPttn4-bAx-m_i1t-ymsP2Ds",
-                      gradient: "from-indigo-500 to-indigo-700"
+                      gradient: "from-indigo-600 to-indigo-900"
                     },
                     {
                       name: "Amal Jagadi",
@@ -1290,7 +1341,7 @@ export default function App() {
                       project: "Trojan HQ",
                       email: "amal.j@npc.ae",
                       img: "https://media.licdn.com/dms/image/v2/D4E03AQHdfMf-x-xIAw/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1718246131677?e=1778716800&v=beta&t=FGhvZ2Qvwc8B0J0YXo7IyJS1dCaNPbNE52n-gZwMM5s",
-                      gradient: "from-slate-700 to-slate-900"
+                      gradient: "from-slate-800 to-slate-950"
                     },
                     {
                       name: "Irshad Basha Syed",
@@ -1299,7 +1350,7 @@ export default function App() {
                       project: "Zayed National Museum",
                       id: "TG2082",
                       email: "irshad.syed@npc.ae",
-                      gradient: "from-emerald-500 to-emerald-700"
+                      gradient: "from-emerald-500 to-emerald-800"
                     },
                     {
                       name: "Vidyaasree Vijayakrishnan",
@@ -1307,7 +1358,7 @@ export default function App() {
                       dept: "Trojan",
                       id: "TR101847",
                       email: "vidyaasree.v@trojan.ae",
-                      gradient: "from-blue-500 to-blue-700"
+                      gradient: "from-blue-600 to-blue-900"
                     },
                     {
                       name: "Alshifa Najiminisa Sajeer",
@@ -1315,28 +1366,28 @@ export default function App() {
                       dept: "Trojan",
                       id: "TR101838",
                       email: "alshifa.s@trojan.ae",
-                      gradient: "from-purple-500 to-purple-700"
+                      gradient: "from-purple-600 to-purple-900"
                     },
                     {
                       name: "Alejandro Llaguno",
                       role: "HSE Admin",
                       dept: "Trojan",
                       email: "alejandro.l@trojan.ae",
-                      gradient: "from-amber-500 to-amber-700"
+                      gradient: "from-amber-500 to-amber-800"
                     },
                     {
                       name: "Muhammad Shahbaz Muhammad Ilyas",
                       role: "Safety Engineer",
                       dept: "Trojan",
                       email: "m.shahbaz@trojan.ae",
-                      gradient: "from-rose-500 to-rose-700"
+                      gradient: "from-rose-600 to-rose-900"
                     },
                     {
                       name: "Mohammed Razal",
                       role: "HSE Officer",
                       dept: "Trojan",
                       email: "m.razal@trojan.ae",
-                      gradient: "from-cyan-500 to-cyan-700"
+                      gradient: "from-cyan-600 to-cyan-900"
                     },
                     {
                       name: "Elius",
@@ -1346,111 +1397,121 @@ export default function App() {
                       email: "elius.n@trojan.ae",
                       github: "https://github.com/s6ft256",
                       id: "TR47934",
-                      gradient: "from-violet-500 to-violet-700"
+                      gradient: "from-violet-600 to-violet-900"
                     }
                   ].map((profile, i) => (
-                    <div key={i} className={`rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all group ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-                      <div className={`h-16 bg-gradient-to-r ${profile.gradient}`}></div>
-                      <div className="px-4 pb-4 -mt-8 text-center">
-                        <div className="relative inline-block mb-2">
+                    <motion.div 
+                      key={i}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: i * 0.05 }}
+                      className={`rounded-3xl overflow-hidden shadow-sm hover:shadow-2xl transition-all group border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-white border-slate-100 hover:border-indigo-100'}`}
+                    >
+                      <div className={`h-24 bg-gradient-to-br transition-all duration-500 group-hover:h-32 ${profile.gradient}`}></div>
+                      <div className="px-5 pb-6 -mt-10 text-center relative z-10">
+                        <div className="relative inline-block mb-4">
+                          <div className="absolute inset-0 bg-white rounded-[2rem] blur-xl opacity-0 group-hover:opacity-40 transition-opacity" />
                           {profile.img ? (
                             <img 
                               src={profile.img} 
                               alt={profile.name}
-                              className="w-16 h-16 rounded-xl object-cover border-2 border-white shadow-sm group-hover:scale-105 transition-transform"
+                              className="w-20 h-20 rounded-[1.5rem] object-cover border-4 border-white shadow-2xl group-hover:scale-110 group-hover:-translate-y-2 transition-all duration-500"
                               referrerPolicy="no-referrer"
                             />
                           ) : (
-                            <div className={`w-16 h-16 rounded-xl border-2 border-white shadow-sm flex items-center justify-center font-bold text-lg group-hover:scale-105 transition-transform ${isDarkMode ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-400'}`}>
+                            <div className={`w-20 h-20 rounded-[1.5rem] border-4 border-white shadow-2xl flex items-center justify-center font-display font-black text-2xl group-hover:scale-110 group-hover:-translate-y-2 transition-all duration-500 ${isDarkMode ? 'bg-slate-700 text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
                               {profile.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                             </div>
                           )}
-                          <div className="absolute -bottom-1 -right-1 bg-emerald-500 w-3 h-3 rounded-full border-2 border-white"></div>
+                          <div className="absolute -bottom-1 -right-1 bg-emerald-500 w-5 h-5 rounded-full border-4 border-white ring-4 ring-emerald-500/20"></div>
                         </div>
-                        <h3 className={`font-bold text-xs mb-0.5 line-clamp-1 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{profile.name}</h3>
-                        <p className="text-indigo-600 font-bold text-[8px] uppercase tracking-wider mb-2 leading-tight">{profile.role}</p>
                         
-                        <div className="flex justify-center mb-2">
+                        <div className="space-y-1 mb-4">
+                          <h3 className={`font-display font-bold text-[13px] leading-tight line-clamp-1 group-hover:text-indigo-600 transition-colors ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{profile.name}</h3>
+                          <div className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
+                            {profile.role}
+                          </div>
+                        </div>
+                        
+                        <div className="flex justify-center mb-5">
                           <a 
                             href={`mailto:${profile.email}`}
-                            className={`p-1.5 rounded-lg flex items-center gap-1 group/btn transition-all border ${isDarkMode ? 'bg-slate-700 hover:bg-indigo-900/50 text-slate-400 hover:text-indigo-300 border-slate-600' : 'bg-slate-50 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 border-slate-100'}`}
+                            className={`p-2 w-full rounded-2xl flex items-center justify-center gap-2 transition-all border group/btn bg-gradient-to-b ${isDarkMode ? 'from-slate-700 to-slate-800 border-slate-600 hover:from-indigo-600 hover:to-indigo-700 text-slate-400 hover:text-white' : 'from-slate-50 to-white border-slate-100 hover:from-white hover:to-slate-50 text-slate-500 hover:text-indigo-600 hover:shadow-lg'}`}
                           >
-                            <Mail className="w-3 h-3" />
-                            <span className={`text-[8px] font-bold group-hover/btn:text-indigo-600 ${isDarkMode ? 'text-slate-400 group-hover/btn:text-indigo-300' : 'text-slate-500'}`}>{profile.email.split('@')[0]}</span>
+                            <Mail className="w-4 h-4" />
+                            <span className="text-[10px] font-bold truncate max-w-[100px]">{profile.email.split('@')[0]}</span>
                           </a>
                         </div>
 
-                        <div className={`space-y-1 pt-2 border-t text-left ${isDarkMode ? 'border-slate-700' : 'border-slate-50'}`}>
-                          <p className="text-[8px] flex justify-between"><span className={`font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Dept:</span> <span className={`font-bold truncate ml-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.dept}</span></p>
-                          {profile.project && <p className="text-[8px] flex justify-between"><span className={`font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Project:</span> <span className={`font-bold truncate ml-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.project}</span></p>}
-                          {profile.github && <p className="text-[8px] flex justify-between"><span className={`font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>GitHub:</span> <a href={profile.github} target="_blank" rel="noopener noreferrer" className={`font-bold truncate ml-1 ${isDarkMode ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-800'}`}>s6ft256</a></p>}
-                          {profile.id && <p className="text-[8px] flex justify-between"><span className={`font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>ID:</span> <span className={`font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.id}</span></p>}
+                        <div className={`space-y-2 pt-4 border-t text-left ${isDarkMode ? 'border-slate-700' : 'border-slate-50'}`}>
+                           <div className="flex items-center justify-between group/info">
+                              <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Department</span>
+                              <span className={`text-[10px] font-bold truncate max-w-[90px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.dept}</span>
+                           </div>
+                           {profile.project && 
+                             <div className="flex items-center justify-between">
+                                <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Project</span>
+                                <span className={`text-[10px] font-bold truncate max-w-[90px] ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{profile.project}</span>
+                             </div>
+                           }
+                           {profile.id && 
+                             <div className="flex items-center justify-between">
+                                <span className={`text-[9px] font-bold uppercase tracking-tighter ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>System ID</span>
+                                <span className={`text-[10px] font-mono font-black ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{profile.id}</span>
+                             </div>
+                           }
                         </div>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
-
                 </div>
               </div>
             </motion.div>
           )}
-
-          {activeTab === 'Support' && (
+           {activeTab === 'Support' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className={`rounded-xl p-5 shadow-sm border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                <div className={`mb-8 pb-6 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
-                        <Mail className="w-6 h-6 text-indigo-600" />
-                      </div>
-                      <div>
-                        <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE Leadership & Support</h2>
-                        <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Contact our HSE team for assistance and support</p>
-                      </div>
+              <div className={`bento-card ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
+                <div className={`mb-8 pb-8 border-b flex items-start justify-between ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
+                      <Headset className="w-6 h-6 text-indigo-500" />
+                    </div>
+                    <div>
+                      <h2 className={`text-xl font-display font-black tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Contact & Support</h2>
+                      <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Direct access to HSE leadership and technical assistance</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className={`text-sm font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>HSE Leadership & Support Contacts</div>
-                  
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
                       role: "HSSE Manager",
                       project: "Trojan HQ",
-                      email: "ahmed.abbas@trojanholding.com"
+                      email: "ahmed.abbas@trojanholding.com",
+                      color: 'indigo'
                     },
                     {
                       name: "Amal Jagadi",
                       role: "HSE Manager",
                       project: "Trojan HQ",
-                      email: "amal.j@npc.ae"
+                      email: "amal.j@npc.ae",
+                      color: 'slate'
                     },
                     {
                       name: "Vidyaasree Vijayakrishnan",
                       role: "HSE Analyst",
                       project: "Trojan HQ",
-                      email: "vidyaasree.v@trojan.ae"
+                      email: "vidyaasree.v@trojan.ae",
+                      color: 'blue'
                     },
                     {
-                      name: "Mohammed Ali Khan",
-                      role: "Safety Officer",
-                      project: "Construction Site A",
-                      email: "mohammed.k@trojan.ae"
-                    },
-                    {
-                      name: "Sarah Johnson",
-                      role: "Environmental Coordinator",
-                      project: "Trojan HQ",
-                      email: "sarah.j@trojan.ae"
-                    },
-                    {
-                      name: "Hassan Mahmoud",
-                      role: "Training Coordinator",
-                      project: "All Projects",
-                      email: "hassan.m@trojan.ae"
+                      name: "Irshad Basha Syed",
+                      role: "Safety Engineer",
+                      project: "NPC",
+                      email: "irshad.syed@npc.ae",
+                      color: 'emerald'
                     },
                     {
                       name: "Elius",
@@ -1458,57 +1519,59 @@ export default function App() {
                       project: "Technical Assistance",
                       email: "elius.n@trojan.ae",
                       github: "https://github.com/s6ft256",
-                      reference: "TR47934"
+                      reference: "TR47934",
+                      color: 'violet'
                     }
                   ].map((person, index) => (
                     <motion.div
                       key={person.email}
-                      initial={{ opacity: 0, x: -20 }}
+                      initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: index * 0.05 }}
-                      className={`flex items-center justify-between p-4 rounded-lg border transition-all ${isDarkMode ? 'bg-slate-700/50 border-slate-600 hover:border-indigo-500 hover:bg-slate-700' : 'bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50'}`}
+                      className={`flex flex-col p-5 rounded-2xl border transition-all ${isDarkMode ? 'bg-slate-700/30 border-slate-600 hover:border-indigo-500 hover:bg-slate-700/50' : 'bg-slate-50/50 border-slate-100 hover:border-indigo-200 hover:bg-white hover:shadow-xl hover:shadow-indigo-500/5'}`}
                     >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-1">
-                          <h3 className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{person.name}</h3>
-                          <span className={`px-2 py-0.5 text-[10px] font-semibold rounded ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-100 text-indigo-700'}`}>
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="space-y-1">
+                          <h3 className={`font-bold text-sm leading-tight ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{person.name}</h3>
+                          <div className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${isDarkMode ? 'bg-indigo-900/50 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
                             {person.role}
-                          </span>
+                          </div>
                         </div>
-                        <div className={`flex items-center gap-2 text-[10px] mb-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                          <Briefcase className="w-3 h-3" />
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-slate-700' : 'bg-white shadow-sm'}`}>
+                           <User className={`w-4 h-4 text-${person.color}-500`} />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2.5 mt-auto">
+                        <div className={`flex items-center gap-2 text-[10px] font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-500 uppercase tracking-tight'}`}>
+                          <Briefcase className="w-3.5 h-3.5 text-slate-400" />
                           {person.project}
                         </div>
-                        <div className="flex items-center gap-4">
+                        
+                        <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100/10">
                           <a 
                             href={`mailto:${person.email}`}
-                            className={`flex items-center gap-1 text-xs transition-colors ${isDarkMode ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-800'}`}
+                            className={`flex flex-1 items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-bold transition-all border ${isDarkMode ? 'bg-indigo-900/20 border-indigo-900/50 text-indigo-300 hover:bg-indigo-600 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-md'}`}
                           >
-                            <Mail className="w-3 h-3" />
-                            {person.email}
+                            <Mail className="w-3.5 h-3.5" />
+                            Email
                           </a>
                           {person.github && (
                             <a 
                               href={person.github}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className={`flex items-center gap-1 text-xs transition-colors ${isDarkMode ? 'text-slate-400 hover:text-indigo-400' : 'text-slate-500 hover:text-indigo-600'}`}
+                              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-[10px] font-bold transition-all border ${isDarkMode ? 'bg-slate-700/50 border-slate-600 text-slate-400 hover:text-indigo-400' : 'bg-white border-slate-200 text-slate-600 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-md'}`}
                             >
-                              <Github className="w-3 h-3" />
+                              <Github className="w-3.5 h-3.5" />
                               GitHub
                             </a>
-                          )}
-                          {person.reference && (
-                            <span className={`text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                              {person.reference}
-                            </span>
                           )}
                         </div>
                       </div>
                     </motion.div>
                   ))}
                 </div>
-
               </div>
             </motion.div>
           )}
