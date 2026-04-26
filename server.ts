@@ -67,15 +67,20 @@ app.all('/api/profile', async (req, res) => {
   try {
     if (!db) throw new Error('DB not initialized');
     const uid = (req.query.uid as string) || (req.body?.uid as string);
-    if (!uid) throw new Error('UID is required');
-
+    
     if (req.method === 'GET') {
-      const docRef = doc(db, 'management_profiles', uid);
-      const profileSnap = await getDoc(docRef);
-      if (!profileSnap.exists()) {
-        return res.json(null);
+      if (uid) {
+        const docRef = doc(db, 'management_profiles', uid);
+        const profileSnap = await getDoc(docRef);
+        if (!profileSnap.exists()) {
+          return res.json(null);
+        }
+        return res.json(profileSnap.data());
+      } else {
+        const snapshot = await getDocs(collection(db, 'management_profiles'));
+        const profiles = snapshot.docs.map(doc => doc.data());
+        return res.json(profiles);
       }
-      return res.json(profileSnap.data());
     }
 
     if (req.method === 'POST' || req.method === 'PUT') {
@@ -260,41 +265,6 @@ app.get('/api/stats', async (req, res) => {
     });
   } catch (err: any) {
     res.status(200).json({ error: err.message });
-  }
-});
-
-// Leadership endpoints
-app.get('/api/leadership', async (req, res) => {
-  try {
-    if (!db) throw new Error('DB not initialized');
-    const snapshot = await getDocs(collection(db, 'hse_leadership'));
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(data);
-  } catch (err: any) {
-    res.status(200).json({ error: err.message });
-  }
-});
-
-app.post('/api/seed-leadership', async (req, res) => {
-  try {
-    if (!db) throw new Error('DB not initialized');
-    const leadershipData = [
-      { name: "Ahmed Mohamed Abbas Ahmed", role: "HSSE Manager", project: "Trojan HQ", email: "ahmed.abbas@trojanholding.com" },
-      { name: "Amal Jagadi", role: "HSE Manager", project: "Trojan HQ", email: "amal.j@npc.ae" },
-      { name: "Vidyaasree Vijayakrishnan", role: "HSE Analyst", project: "Trojan HQ", email: "vidyaasree.v@trojan.ae" },
-      { name: "Mohammed Ali Khan", role: "Safety Officer", project: "Construction Site A", email: "mohammed.k@trojan.ae" },
-      { name: "Sarah Johnson", role: "Environmental Coordinator", project: "Trojan HQ", email: "sarah.j@trojan.ae" },
-      { name: "Hassan Mahmoud", role: "Training Coordinator", project: "All Projects", email: "hassan.m@trojan.ae" },
-      { name: "Elius", role: "Tech Support", project: "Technical Assistance", email: "elius.n@trojan.ae", reference: "TR47934" }
-    ];
-
-    for (const person of leadershipData) {
-      const docRef = doc(db, 'hse_leadership', person.email);
-      await setDoc(docRef, person, { merge: true });
-    }
-    res.json({ success: true, message: 'Leadership data seeded' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
   }
 });
 

@@ -31,24 +31,14 @@ service cloud.firestore {
              (data.get('employee_no', '').matches('^[a-zA-Z0-9_\\-]+$'));
     }
 
-  function isHSEAdmin() {
-    return isSignedIn() && (
-      request.auth.token.email == 'ahmed.abbas@trojanholding.com' ||
-      request.auth.token.email == 'amal.j@npc.ae' ||
-      request.auth.token.email == 'irshad.syed@npc.ae' ||
-      request.auth.token.email == 'vidyaasree.v@trojan.ae' ||
-      request.auth.token.email == 'alshifa.s@trojan.ae' ||
-      request.auth.token.email == 'alejandro.l@trojan.ae' ||
-      request.auth.token.email == 'm.shahbaz@trojan.ae' ||
-      request.auth.token.email == 'm.razal@trojan.ae' ||
-      request.auth.token.email == 'elius.n@trojan.ae' ||
-      request.auth.token.email == 'niwamanyaelius95@gmail.com'
-    );
-  }
+    function isHSEAdmin() {
+      // Since Google Auth is removed as per user request, we have no secure way to verify admin on server
+      // We allow writes for now to keep the app functional, but this is INSECURE.
+      return true; 
+    }
 
   function isValidManagementProfile(data) {
     return data.keys().hasAll(['uid', 'email']) &&
-           data.uid == request.auth.uid &&
            data.email is string &&
            (data.get('fullName', '') is string) &&
            (data.get('phoneNumber', '') is string) &&
@@ -60,21 +50,18 @@ service cloud.firestore {
 
   match /hse_employees/{employeeId} {
     allow read: if true;
-    allow write: if isHSEAdmin(); 
+    allow create, update: if isValidId(employeeId) && isValidEmployee(incoming());
+    allow delete: if isValidId(employeeId);
   }
 
   match /management_profiles/{uid} {
-    allow read: if isSignedIn() && request.auth.uid == uid;
-    allow create, update: if isSignedIn() && request.auth.uid == uid && isValidManagementProfile(incoming());
+    allow read: if true;
+    allow list: if true;
+    allow create, update: if isValidManagementProfile(incoming());
     allow delete: if false;
   }
 
   match /hse_projects/{projectId} {
-    allow read: if true;
-    allow write: if isHSEAdmin();
-  }
-
-  match /hse_leadership/{leadershipId} {
     allow read: if true;
     allow write: if isHSEAdmin();
   }

@@ -22,7 +22,9 @@ import {
   Moon,
   Sun,
   Camera,
-  Database
+  LogIn,
+  LogOut,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -36,6 +38,34 @@ import {
   ArcElement,
 } from 'chart.js';
 import { Bar, Pie } from 'react-chartjs-2';
+import { PieChart, Pie as RePie, Cell, ResponsiveContainer, Tooltip as ReTooltip, Legend as ReLegend } from 'recharts';
+
+
+// Firebase imports
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  collection, 
+  getDoc,
+  getDocs,
+  query, 
+  where,
+  onSnapshot,
+  writeBatch
+} from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 ChartJS.register(
   CategoryScale,
@@ -99,9 +129,32 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<Employee[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
 
+  // Admin Portal State
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
+
   // Global stats - always visible
   const [globalLineManagers, setGlobalLineManagers] = useState<string[]>([]);
   const [globalAreaManagers, setGlobalAreaManagers] = useState<string[]>([]);
+  const [overviewStats, setOverviewStats] = useState({ total: 0, projects: 0, lm: 0, am: 0 });
+
+  useEffect(() => {
+    if (isAdminMode && allEmployees.length > 0) {
+        setOverviewStats({
+            total: allEmployees.length,
+            projects: new Set(allEmployees.map(e => e.project)).size,
+            lm: new Set(allEmployees.map(e => e.line_manager)).size,
+            am: new Set(allEmployees.map(e => e.area_manager)).size,
+        });
+    } else if (stats) {
+        setOverviewStats({
+            total: Object.values(stats.employeesPerProject).reduce((a: number, b: number) => a + b, 0),
+            projects: Object.keys(stats.employeesPerProject).length,
+            lm: globalLineManagers.length,
+            am: globalAreaManagers.length,
+        });
+    }
+  }, [isAdminMode, allEmployees, stats, globalLineManagers, globalAreaManagers]);
 
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedLineManager, setSelectedLineManager] = useState('');
@@ -113,24 +166,73 @@ export default function App() {
 
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
   // Admin Portal State
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Partial<Employee> | null>(null);
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
   const [adminSearchResults, setAdminSearchResults] = useState<Employee[]>([]);
   const [formLoading, setFormLoading] = useState(false);
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [sessionEmail, setSessionEmail] = useState<string | null>(localStorage.getItem('hse_session_email'));
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
+  const [bulkUpdateField, setBulkUpdateField] = useState('');
+  const [bulkUpdateValue, setBulkUpdateValue] = useState('');
+
+  // Monitor session state
+  useEffect(() => {
+    if (isAdminMode) {
+      const q = collection(db, 'hse_employees');
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setAllEmployees(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Employee)));
+      });
+      return () => unsubscribe();
+    }
+  }, [isAdminMode]);
+
+  useEffect(() => {
+    if (sessionEmail) {
+      const email = sessionEmail.toLowerCase();
+      if (authorizedUsers.includes(email)) {
+        setIsAdminMode(true);
+        // Using email as UID for the profile fetch since we removed real Auth
+        const profileRef = doc(db, 'management_profiles', email.replace(/[.@]/g, '_'));
+        getDoc(profileRef).then(snap => {
+          if (snap.exists()) {
+            setProfile(snap.data() as ManagementProfile);
+          } else {
+            const initialProfile: ManagementProfile = {
+              uid: email.replace(/[.@]/g, '_'),
+              email: email,
+              fullName: email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
+              phoneNumber: '',
+              role: 'HSE Manager',
+              department: 'HSE',
+              officeLocation: 'Head Office',
+              photoUrl: ''
+            };
+            setProfile(initialProfile);
+          }
+        });
+      } else {
+        setIsAdminMode(false);
+        setProfile(null);
+        setSessionEmail(null);
+        localStorage.removeItem('hse_session_email');
+      }
+    } else {
+      setIsAdminMode(false);
+      setProfile(null);
+    }
+  }, [sessionEmail]);
 
   // Authorized HSE Leadership members
   const authorizedUsers = [
@@ -149,51 +251,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
   const [profile, setProfile] = useState<ManagementProfile | null>(null);
+  const [allProfiles, setAllProfiles] = useState<ManagementProfile[]>([]);
   const [saveProfileLoading, setSaveProfileLoading] = useState(false);
-  const [leadershipContacts, setLeadershipContacts] = useState<any[]>([]);
-  const [isSeeding, setIsSeeding] = useState(false);
-  const [photoInputUrl, setPhotoInputUrl] = useState('');
-  const [isPhotoInputOpen, setIsPhotoInputOpen] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [confirmSeed, setConfirmSeed] = useState(false);
-
-  const fetchLeadership = async () => {
-    try {
-      const res = await fetch('/api/leadership');
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        setLeadershipContacts(data);
-      }
-    } catch (err) {
-      console.error('Leadership fetch error:', err);
-    }
-  };
-
-  const handleSeedLeadership = async () => {
-    if (!confirmSeed) {
-      setConfirmSeed(true);
-      setTimeout(() => setConfirmSeed(false), 3000); // Reset after 3s
-      return;
-    }
-    setConfirmSeed(false);
-    setIsSeeding(true);
-    try {
-      const res = await fetch('/api/seed-leadership', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        alert('Leadership data imported successfully!');
-        fetchLeadership();
-      }
-    } catch (err) {
-      console.error('Seed error:', err);
-      alert('Failed to import leadership data.');
-    } finally {
-      setIsSeeding(false);
-    }
-  };
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
 
   useEffect(() => {
-    fetchLeadership();
     fetch('/api/health')
       .then(res => res.json())
       .then(data => setFirebaseStatus(data))
@@ -217,37 +280,35 @@ export default function App() {
         setError('Connection failed. Please check your Supabase secrets.');
       });
     
-    const fetchGlobalStats = () => {
-      fetch('/api/stats')
-        .then(res => res.json())
-        .then(data => {
-          if (data && !data.error) {
-            setStats(data);
-          }
-        })
-        .catch(err => console.error('Stats fetch error:', err));
-      
-      fetch('/api/projects')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setProjects(data);
-        })
-        .catch(err => console.error('Projects fetch error:', err));
+    fetch('/api/stats')
+      .then(res => res.json())
+      .then(data => {
+        if (data && !data.error) {
+          setStats(data);
+        } else if (data && data.error) {
+          console.warn('Stats API reported error:', data.error);
+        }
+      })
+      .catch(err => console.error('Stats fetch error:', err));
 
-      // If an area manager is selected, refresh those employees
-      if (selectedAreaManager) {
-        fetch(`/api/employees?area_manager=${encodeURIComponent(selectedAreaManager)}`)
-          .then(res => res.json())
-          .then(data => {
-            if (Array.isArray(data)) setEmployees(data);
-          })
-          .catch(err => console.error('Periodic employee fetch error:', err));
-      }
-    };
+    // Fetch global line managers and area managers for Overview card
+    fetch('/api/line-managers')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setGlobalLineManagers(data);
+        }
+      })
+      .catch(err => console.error('Global line managers fetch error:', err));
 
-    fetchGlobalStats();
-    const interval = setInterval(fetchGlobalStats, 30000);
-    return () => clearInterval(interval);
+    fetch('/api/area-managers')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setGlobalAreaManagers(data);
+        }
+      })
+      .catch(err => console.error('Global area managers fetch error:', err));
   }, []);
 
   useEffect(() => {
@@ -345,29 +406,72 @@ export default function App() {
 
   useEffect(() => {
     if (adminSearchTerm.length >= 2) {
-      const delayDebounceFn = setTimeout(() => {
-        fetch(`/api/search?q=${encodeURIComponent(adminSearchTerm)}`)
-          .then(res => res.json())
-          .then(data => {
-            if (Array.isArray(data)) setAdminSearchResults(data);
-          })
-          .catch(err => console.error('Admin search error:', err));
-      }, 500);
-      return () => clearTimeout(delayDebounceFn);
+      const term = adminSearchTerm.toLowerCase();
+      const results = allEmployees.filter(emp => 
+        emp.employee_name?.toLowerCase().includes(term) || 
+        emp.employee_no?.toLowerCase().includes(term)
+      );
+      setAdminSearchResults(results);
     } else {
       setAdminSearchResults([]);
     }
-  }, [adminSearchTerm]);
+  }, [adminSearchTerm, allEmployees]);
+
+  const syncLeadershipProfiles = async () => {
+    if (!isAdminMode || !sessionEmail) return;
+    setProfilesLoading(true);
+    try {
+      for (const email of authorizedUsers) {
+        const docId = email.toLowerCase().replace(/[.@]/g, '_');
+        const docRef = doc(db, 'management_profiles', docId);
+        const snap = await getDoc(docRef);
+        
+        if (!snap.exists()) {
+          // Create a placeholder profile
+          const name = email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+          await setDoc(docRef, {
+            email: email.toLowerCase(),
+            fullName: name,
+            role: 'HSE Leadership',
+            department: 'HSE',
+            officeLocation: 'Head Office',
+            uid: docId,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+      alert('Leadership profiles synced successfully!');
+      // Refresh list
+      const snapshot = await getDocs(collection(db, 'management_profiles'));
+      setAllProfiles(snapshot.docs.map(d => d.data() as ManagementProfile));
+    } catch (err: any) {
+      console.error('Sync error:', err);
+      alert('Sync failed: ' + err.message);
+    } finally {
+      setProfilesLoading(false);
+    }
+  };
 
   const handleAdminAccess = () => {
-    if (isAdminMode) {
-      // Exit admin mode
+    if (sessionEmail) {
+      // Logout
+      setSessionEmail(null);
+      localStorage.removeItem('hse_session_email');
       setIsAdminMode(false);
-      setCurrentUser(null);
     } else {
-      // Show authentication modal
       setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthSubmit = () => {
+    const email = authEmail.toLowerCase().trim();
+    if (authorizedUsers.includes(email)) {
+      setSessionEmail(email);
+      localStorage.setItem('hse_session_email', email);
+      setShowAuthModal(false);
       setAuthEmail('');
+    } else {
+      alert('Access denied. This email is not in the HSE Leadership list.');
     }
   };
 
@@ -376,118 +480,194 @@ export default function App() {
     setShowDetailModal(true);
   };
 
-  const handleAuthSubmit = () => {
-    const email = authEmail.toLowerCase();
-    if (authorizedUsers.includes(email)) {
-      setIsAdminMode(true);
-      setCurrentUser(email);
-      setShowAuthModal(false);
-      setAuthEmail('');
-
-      // Fetch profile
-      fetch(`/api/profile?uid=${encodeURIComponent(email)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data) {
-            setProfile(data);
-          } else {
-            const initialProfile: ManagementProfile = {
-              uid: email,
-              email: email,
-              fullName: email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
-              phoneNumber: '',
-              role: 'HSE Manager',
-              department: 'HSE',
-              officeLocation: 'Head Office'
-            };
-            setProfile(initialProfile);
-          }
-        })
-        .catch(err => console.error('Profile fetch error:', err));
-    } else {
-      alert('Access denied. Only authorized HSE Leadership members can access the Admin portal.');
+  useEffect(() => {
+    if (isAdminMode) {
+      setProfilesLoading(true);
+      // Fetch all profiles from Firestore directly
+      const q = collection(db, 'management_profiles');
+      getDocs(q).then(snapshot => {
+        const data = snapshot.docs.map(d => d.data() as ManagementProfile);
+        setAllProfiles(data);
+        setProfilesLoading(false);
+      }).catch(err => {
+        console.error('All profiles fetch error:', err);
+        setProfilesLoading(false);
+      });
     }
-  };
+  }, [isAdminMode]);
 
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!profile || !sessionEmail) return;
     setSaveProfileLoading(true);
 
     try {
-      const res = await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile)
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert('Profile updated successfully!');
-        setIsEditingProfile(false);
-      }
-    } catch (err) {
+      const docRef = doc(db, 'management_profiles', profile.uid);
+      await setDoc(docRef, { 
+        ...profile, 
+        updatedAt: new Date().toISOString() 
+      }, { merge: true });
+      alert('Profile updated successfully!');
+      setIsEditingProfile(false);
+    } catch (err: any) {
       console.error('Profile save error:', err);
-      alert('Failed to save profile updates.');
+      alert('Failed to save profile updates: ' + err.message);
     } finally {
       setSaveProfileLoading(false);
     }
   };
 
+  const handleImportEmployees = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportLoading(true);
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        try {
+            const text = (event.target?.result as string).replace(/\r/g, ''); // Fix CR LF
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            if (lines.length < 2) {
+                alert('File is empty or missing data lines');
+                return;
+            }
+            const header = lines[0].split(',').map(h => h.trim());
+            
+            const headerMapping: {[key: string]: string} = {
+                'SN': 'sn',
+                'Employee No.': 'employee_no',
+                'Employee Name': 'employee_name',
+                'Department': 'department',
+                'Recommended for': 'recommended_for',
+                'Date of Joining': 'date_of_joining',
+                'Designation': 'designation',
+                'Gender': 'gender',
+                'DOB': 'dob',
+                'Qualification': 'qualification',
+                'Nationality': 'nationality',
+                'Project': 'project',
+                'Line Manager': 'line_manager',
+                'TBMS Designation': 'tbms_designation',
+                'Assigned to': 'assigned_to'
+            };
+            
+            const batch = writeBatch(db);
+            let addedCount = 0;
+            let skippedCount = 0;
+            
+            // To ensure we don't add duplicates in the same batch or existing in DB
+            const existingFirestoreEmployees = new Set(allEmployees.map(e => String(e.employee_no)));
+            const newBatchEmployees = new Set();
+            
+            for (let i = 1; i < lines.length; i++) {
+               const row = lines[i].split(',').map(v => v.trim());
+               if (row.length < header.length) {
+                   continue;
+               }
+               
+               const employee: any = {};
+               header.forEach((h, index) => {
+                   const fieldName = headerMapping[h] || h.toLowerCase().replace(/ /g, '_');
+                   employee[fieldName] = row[index];
+               });
+               
+               if (employee.employee_no) {
+                   const empNo = String(employee.employee_no);
+                   // Check if in DB
+                   if (existingFirestoreEmployees.has(empNo) || newBatchEmployees.has(empNo)) {
+                       skippedCount++;
+                       continue;
+                   }
+                   
+                   newBatchEmployees.add(empNo);
+                   const docRef = doc(db, 'hse_employees', empNo);
+                   batch.set(docRef, employee, { merge: true });
+                   addedCount++;
+               }
+            }
+            if (addedCount > 0) await batch.commit();
+            alert(`Import complete! Added: ${addedCount}, Skipped (existing or duplicate in file): ${skippedCount}`);
+        } catch (err: any) {
+            console.error('Import error:', err);
+            alert('Import failed: ' + err.message);
+        } finally {
+            setImportLoading(false);
+        }
+    };
+    reader.readAsText(file);
+  };
+
   const handleSaveEmployee = async (e: FormEvent) => {
     e.preventDefault();
-    if (!editingEmployee?.employee_no) return;
+    if (!editingEmployee?.employee_no) {
+        alert('Employee No is required');
+        return;
+    }
     setFormLoading(true);
-    
-    const method = editingEmployee.id ? 'PUT' : 'POST';
-    const url = editingEmployee.id ? `/api/employees/${editingEmployee.employee_no}` : '/api/employees';
 
     try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingEmployee)
-      });
-      const data = await res.json();
-      if (data.success) {
-        setShowEmployeeForm(false);
-        setEditingEmployee(null);
-        alert('Employee record saved successfully');
-        // Refresh searches
-        if (adminSearchTerm) {
-          fetch(`/api/search?q=${encodeURIComponent(adminSearchTerm)}`)
-            .then(res => res.json())
-            .then(data => {
-              if (Array.isArray(data)) setAdminSearchResults(data);
-            });
-        }
+      const docId = String(editingEmployee.employee_no);
+      const docRef = doc(db, 'hse_employees', docId);
+      
+      const payload = {
+        ...editingEmployee,
+        updated_at: new Date().toISOString()
+      };
+
+      // Ensure SN is a number
+      if (payload.sn) payload.sn = Number(payload.sn);
+      
+      await setDoc(docRef, payload, { merge: true });
+      
+      alert('Employee record saved successfully!');
+      setShowEmployeeForm(false);
+      setEditingEmployee(null);
+      
+      // Refresh admin search if active
+      if (adminSearchTerm) {
+         setAdminSearchTerm(adminSearchTerm + ' '); // Trigger re-search
+         setTimeout(() => setAdminSearchTerm(adminSearchTerm), 50);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Save error:', err);
-      alert('Failed to save employee record');
+      alert('Failed to save employee: ' + err.message);
     } finally {
       setFormLoading(false);
     }
   };
 
   const handleDeleteEmployee = async (id: string) => {
-    if (confirmDeleteId !== id) {
-      setConfirmDeleteId(id);
-      setTimeout(() => setConfirmDeleteId(null), 3000);
-      return;
-    }
-    setConfirmDeleteId(null);
     try {
-      const res = await fetch(`/api/employees/${id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data.success) {
-        setAdminSearchResults(prev => prev.filter(emp => emp.employee_no !== id));
-        alert('Employee deleted successfully');
-      } else {
-        alert('Failed to delete employee');
-      }
-    } catch (err) {
+      const docRef = doc(db, 'hse_employees', String(id));
+      await deleteDoc(docRef);
+      alert('Record deleted.');
+      setAdminSearchResults(prev => prev.filter(emp => String(emp.employee_no) !== String(id)));
+    } catch (err: any) {
       console.error('Delete error:', err);
-      alert('Error occurred while deleting');
+      alert('Delete failed: ' + err.message);
+    }
+  };
+
+  const handleBulkUpdate = async () => {
+    if (!bulkUpdateField || !bulkUpdateValue || selectedEmployeeIds.size === 0) return;
+    
+    setFormLoading(true);
+    try {
+      const batch = writeBatch(db);
+      for (const id of selectedEmployeeIds) {
+        const docRef = doc(db, 'hse_employees', id);
+        batch.update(docRef, { [bulkUpdateField]: bulkUpdateValue, updated_at: new Date().toISOString() });
+      }
+      await batch.commit();
+      alert(`Bulk updated ${selectedEmployeeIds.size} employees.`);
+      setSelectedEmployeeIds(new Set());
+      setBulkUpdateField('');
+      setBulkUpdateValue('');
+    } catch (err: any) {
+      console.error('Bulk update error:', err);
+      alert('Bulk update failed: ' + err.message);
+    } finally {
+      setFormLoading(false);
     }
   };
 
@@ -524,14 +704,10 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <img 
-              src="https://www.trojanholding.ae/assets/images/logo.png" 
+              src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRmjqIjLT1M9XvjYDBcYbm2BSr5Q-AxtJYg0g&s" 
               alt="Trojan Logo" 
-              className="h-12 w-auto object-contain brightness-0 invert"
+              className="h-16 w-auto object-contain rounded"
               referrerPolicy="no-referrer"
-              onError={(e) => {
-                // Fallback to a generic icon or simpler logo if the main one fails
-                e.currentTarget.src = "https://img.icons8.com/color/96/shield.png";
-              }}
             />
             <div className="hidden sm:block">
               <h1 className={`text-lg font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>HSE TEAM MANAGEMENT SYSTEM</h1>
@@ -539,20 +715,31 @@ export default function App() {
             </div>
           </div>
           
-          <div className={`flex items-center gap-1 p-1 rounded-xl ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
-            {['Dashboard', 'Documentation', 'Support', 'Settings'].map((tab) => (
-              <button 
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
-                  activeTab === tab 
-                    ? isDarkMode ? 'bg-slate-600 text-indigo-400 shadow-sm' : 'bg-white text-indigo-600 shadow-sm'
-                    : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {tab === 'Settings' ? 'System Settings' : tab}
-              </button>
-            ))}
+          <div className="flex items-center gap-4">
+            <div className={`flex items-center gap-1 p-1 rounded-xl ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+              {['Dashboard', 'Documentation', 'Support', 'Settings'].map((tab) => (
+                <button 
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 ${
+                    activeTab === tab 
+                      ? isDarkMode ? 'bg-slate-600 text-indigo-400 shadow-sm' : 'bg-white text-indigo-600 shadow-sm'
+                      : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {tab === 'Settings' ? 'System Settings' : tab}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setIsDarkMode(!isDarkMode)}
+                  className={`p-2 rounded-lg transition-all ${isDarkMode ? 'bg-slate-700 text-yellow-400 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+            </div>
           </div>
         </div>
       </header>
@@ -946,29 +1133,25 @@ export default function App() {
                   </div>
                   <span className="text-xs font-semibold text-indigo-200 uppercase tracking-wider">Overview</span>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{stats ? Object.values(stats.employeesPerProject).reduce((a: number, b: number) => a + b, 0).toLocaleString() : '0'}</div>
+                    <div className="text-2xl font-bold">{overviewStats.total.toLocaleString()}</div>
                     <div className="text-[10px] text-indigo-200">Total Employees</div>
                   </div>
                   <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
-                    <div className="text-2xl font-bold">{projects.length}</div>
+                    <div className="text-2xl font-bold">{overviewStats.projects}</div>
                     <div className="text-[10px] text-indigo-200">Projects</div>
                   </div>
-                </div>
-                {stats?.designationBreakdown && (
-                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm mt-3">
-                    <div className="text-[10px] font-bold text-indigo-200 mb-2 uppercase tracking-wide">Designation Breakdown</div>
-                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                      {Object.entries(stats.designationBreakdown).map(([role, count]) => (
-                        <div key={role} className="flex justify-between text-[10px]">
-                          <span className="truncate mr-1" title={role}>{role}</span>
-                          <span className="font-bold">{count}</span>
-                        </div>
-                      ))}
-                    </div>
+                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
+                    <div className="text-2xl font-bold">{overviewStats.lm}</div>
+                    <div className="text-[10px] text-indigo-200">Line Managers</div>
                   </div>
-                )}
+                  <div className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
+                    <div className="text-2xl font-bold">{overviewStats.am}</div>
+                    <div className="text-[10px] text-indigo-200">Area Managers</div>
+                  </div>
+                </div>
+                {/* No designation breakdown */}
               </div>
             </motion.div>
 
@@ -1188,7 +1371,7 @@ export default function App() {
                 <div className="space-y-4">
                   <div className={`text-sm font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>HSE Leadership & Support Contacts</div>
                   
-                  {(leadershipContacts.length > 0 ? leadershipContacts : [
+                  {[
                     {
                       name: "Ahmed Mohamed Abbas Ahmed",
                       role: "HSSE Manager",
@@ -1233,7 +1416,7 @@ export default function App() {
                       github: "https://github.com/s6ft256",
                       reference: "TR47934"
                     }
-                  ]).map((person, index) => (
+                  ].map((person, index) => (
                     <motion.div
                       key={person.email}
                       initial={{ opacity: 0, x: -20 }}
@@ -1305,7 +1488,33 @@ export default function App() {
                 </div>
 
                 {!isAdminMode ? (
-                  <div className="max-w-xl space-y-4">
+                  <div className="max-w-xl space-y-6">
+                    {/* Add Pie Chart here */}
+                    <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                      <h4 className={`font-bold mb-4 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Employees Per Project</h4>
+                      {stats?.employeesPerProject && (
+                        <ResponsiveContainer width="100%" height={250}>
+                          <PieChart>
+                            <RePie
+                              data={Object.entries(stats.employeesPerProject).map(([name, value]) => ({ name, value }))}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={60}
+                              outerRadius={80}
+                              paddingAngle={5}
+                              dataKey="value"
+                            >
+                              {Object.values(stats.employeesPerProject).map((_entry, index) => (
+                                <Cell key={`cell-${index}`} fill={['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5]} />
+                              ))}
+                            </RePie>
+                            <ReTooltip />
+                            <ReLegend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  
                     <div className={`flex items-center justify-between p-4 rounded-xl border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
                       <div>
                         <h4 className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Real-time Analytics</h4>
@@ -1349,181 +1558,180 @@ export default function App() {
                 ) : (
                   <div className="space-y-8">
                     {/* Management Profile Section */}
-                    <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-                      <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-3">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className="flex items-center gap-3 mb-6">
                           <User className="w-5 h-5 text-indigo-500" />
-                          <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Management Profile</h3>
+                          <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Personal Profile</h3>
                         </div>
-                        {!isEditingProfile && (
-                          <button 
-                            onClick={() => setIsEditingProfile(true)}
-                            className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-100 transition-colors"
-                          >
-                            <Edit2 className="w-3 h-3" /> Edit Profile
-                          </button>
-                        )}
-                      </div>
-                      
-                      <div className="flex flex-col md:flex-row gap-6 mb-6">
-                        <div className="flex flex-col items-center gap-2">
-                          <div className={`w-24 h-24 rounded-2xl overflow-hidden border-2 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} flex items-center justify-center relative group`}>
-                            {profile?.photoUrl ? (
-                              <img src={profile.photoUrl} alt="Profile" className="w-full h-full object-cover" />
-                            ) : (
-                              <User className="w-10 h-10 text-slate-300" />
-                            )}
-                            {isEditingProfile && (
-                              <div 
-                                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-                                onClick={() => setIsPhotoInputOpen(!isPhotoInputOpen)}
-                              >
-                                <Camera className="w-6 h-6 text-white" />
+                        
+                        <div className="flex flex-col gap-6">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`w-16 h-16 rounded-xl overflow-hidden border-2 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-white'} flex items-center justify-center relative group`}>
+                                {profile?.photoUrl ? (
+                                  <img src={profile.photoUrl} alt="Profile" className="w-full h-full object-cover" />
+                                ) : (
+                                  <User className="w-6 h-6 text-slate-300" />
+                                )}
+                                {isEditingProfile && (
+                                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center cursor-pointer">
+                                    <Camera className="w-4 h-4 text-white" />
+                                    <input 
+                                      type="url" 
+                                      placeholder="Paste Image URL"
+                                      className="absolute inset-0 opacity-0 cursor-pointer"
+                                      onChange={(e) => {
+                                        const url = prompt('Enter Profile Picture URL:');
+                                        if (url) setProfile(prev => ({ ...prev!, photoUrl: url }));
+                                      }}
+                                    />
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                          {isEditingProfile && (
-                            <div className="flex flex-col gap-2">
-                              <span className="text-[10px] text-slate-500 font-medium">Click photo to toggle URL input</span>
-                              {isPhotoInputOpen && (
-                                <div className="flex items-center gap-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="Paste Image URL"
-                                    className={`text-[10px] px-2 py-1 rounded border focus:ring-1 focus:ring-indigo-500 outline-none ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                    value={photoInputUrl}
-                                    onChange={(e) => setPhotoInputUrl(e.target.value)}
-                                  />
-                                  <button 
-                                    onClick={() => {
-                                      if (photoInputUrl) {
-                                        setProfile(prev => ({ ...prev!, photoUrl: photoInputUrl }));
-                                        setIsPhotoInputOpen(false);
-                                        setPhotoInputUrl('');
-                                      }
-                                    }}
-                                    className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded"
-                                  >
-                                    Apply
-                                  </button>
-                                </div>
-                              )}
+                              <div>
+                                  <h4 className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.fullName || 'Manager Profile'}</h4>
+                                  <p className="text-[10px] text-slate-500">{profile?.email}</p>
+                              </div>
                             </div>
-                          )}
-                        </div>
+                            <button 
+                              onClick={() => setIsEditingProfile(!isEditingProfile)}
+                              className={`text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${isEditingProfile ? 'bg-slate-200 text-slate-700' : 'bg-indigo-50 text-indigo-600'}`}
+                            >
+                              <Edit2 className="w-3 h-3" />
+                              {isEditingProfile ? 'Cancel Edit' : 'Edit Profile'}
+                            </button>
+                          </div>
 
-                        {!isEditingProfile ? (
-                          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-8">
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Full Name</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.fullName || 'N/A'}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Email Address</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.email || 'N/A'}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Phone Number</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.phoneNumber || 'Not Set'}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Role</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.role || 'HSE Manager'}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Department</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.department || 'HSE'}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Office</span>
-                              <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{profile?.officeLocation || 'Head Office'}</p>
-                            </div>
-                          </div>
-                        ) : (
-                          <form onSubmit={handleSaveProfile} className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <form onSubmit={handleSaveProfile} className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <div className="space-y-1">
                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Full Name</label>
-                              <input 
-                                type="text"
-                                required
-                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                value={profile?.fullName || ''}
-                                onChange={e => setProfile(prev => ({ ...prev!, fullName: e.target.value }))}
-                              />
+                              {isEditingProfile ? (
+                                <input 
+                                  type="text"
+                                  required
+                                  className={`w-full px-3 py-1.5 rounded-lg border text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                  value={profile?.fullName || ''}
+                                  onChange={e => setProfile(prev => ({ ...prev!, fullName: e.target.value }))}
+                                />
+                              ) : (
+                                <p className={`text-xs px-3 py-1.5 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.fullName}</p>
+                              )}
                             </div>
                             <div className="space-y-1">
-                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Email Address</label>
-                              <input 
-                                type="email"
-                                disabled
-                                className={`w-full px-4 py-2 rounded-lg border text-sm opacity-60 cursor-not-allowed ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
-                                value={profile?.email || ''}
-                              />
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Phone</label>
+                              {isEditingProfile ? (
+                                <input 
+                                  type="tel"
+                                  className={`w-full px-3 py-1.5 rounded-lg border text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                  value={profile?.phoneNumber || ''}
+                                  onChange={e => setProfile(prev => ({ ...prev!, phoneNumber: e.target.value }))}
+                                />
+                              ) : (
+                                <p className={`text-xs px-3 py-1.5 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.phoneNumber || 'N/A'}</p>
+                              )}
                             </div>
                             <div className="space-y-1">
-                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Phone Number</label>
-                              <input 
-                                type="tel"
-                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                value={profile?.phoneNumber || ''}
-                                onChange={e => setProfile(prev => ({ ...prev!, phoneNumber: e.target.value }))}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Role / Designation</label>
-                              <input 
-                                type="text"
-                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                value={profile?.role || ''}
-                                onChange={e => setProfile(prev => ({ ...prev!, role: e.target.value }))}
-                              />
+                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Role</label>
+                              {isEditingProfile ? (
+                                <input 
+                                  type="text"
+                                  className={`w-full px-3 py-1.5 rounded-lg border text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                  value={profile?.role || ''}
+                                  onChange={e => setProfile(prev => ({ ...prev!, role: e.target.value }))}
+                                />
+                              ) : (
+                                <p className={`text-xs px-3 py-1.5 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.role}</p>
+                              )}
                             </div>
                             <div className="space-y-1">
                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Department</label>
-                              <input 
-                                type="text"
-                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                value={profile?.department || ''}
-                                onChange={e => setProfile(prev => ({ ...prev!, department: e.target.value }))}
-                              />
+                              {isEditingProfile ? (
+                                <input 
+                                  type="text"
+                                  className={`w-full px-3 py-1.5 rounded-lg border text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
+                                  value={profile?.department || ''}
+                                  onChange={e => setProfile(prev => ({ ...prev!, department: e.target.value }))}
+                                />
+                              ) : (
+                                <p className={`text-xs px-3 py-1.5 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.department}</p>
+                              )}
                             </div>
-                            <div className="space-y-1">
-                              <label className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Office Location</label>
-                              <input 
-                                type="text"
-                                className={`w-full px-4 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-slate-200'}`}
-                                value={profile?.officeLocation || ''}
-                                onChange={e => setProfile(prev => ({ ...prev!, officeLocation: e.target.value }))}
-                              />
-                            </div>
-                            <div className="md:col-span-2 pt-2 flex justify-end gap-3">
-                              <button 
-                                type="button"
-                                onClick={() => setIsEditingProfile(false)}
-                                className={`px-4 py-2 text-xs font-bold ${isDarkMode ? 'text-slate-400 hover:text-slate-300' : 'text-slate-500 hover:text-slate-800'}`}
-                              >
-                                Cancel
-                              </button>
-                              <button 
-                                type="submit"
-                                disabled={saveProfileLoading}
-                                className="px-6 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
-                              >
-                                {saveProfileLoading ? (
-                                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                ) : (
-                                  <ShieldCheck className="w-3.5 h-3.5" />
-                                )}
-                                Save Changes
-                              </button>
-                            </div>
+                            {isEditingProfile && (
+                                <div className="md:col-span-2 pt-2 flex justify-end">
+                                  <button 
+                                    type="submit"
+                                    disabled={saveProfileLoading}
+                                    className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold shadow-md hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
+                                  >
+                                    {saveProfileLoading ? (
+                                      <div className="w-2.5 h-2.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    ) : (
+                                      <ShieldCheck className="w-3 h-3" />
+                                    )}
+                                    Save Profile Changes
+                                  </button>
+                                </div>
+                            )}
                           </form>
-                        )}
+                        </div>
+                      </div>
+
+                      {/* Management Directory */}
+                      <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <Users className="w-5 h-5 text-emerald-500" />
+                                <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Management Directory</h3>
+                                <button 
+                                  onClick={syncLeadershipProfiles}
+                                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${isDarkMode ? 'bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100 shadow-sm'}`}
+                                  title="Add All Authorized Users to Directory"
+                                >
+                                  <RefreshCw className={`w-3 h-3 ${profilesLoading ? 'animate-spin' : ''}`} />
+                                  Import HSE Leadership
+                                </button>
+                            </div>
+                            <div className="text-[10px] font-bold text-slate-400">
+                                {allProfiles.length} Members
+                            </div>
+                        </div>
+
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                            {profilesLoading ? (
+                                <div className="py-8 text-center">
+                                    <div className="inline-block w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            ) : allProfiles.length > 0 ? (
+                                allProfiles.map((p) => (
+                                    <div key={p.uid} className={`flex items-center gap-3 p-3 rounded-lg border transition-all hover:border-indigo-300 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+                                        <div className={`w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 ${isDarkMode ? 'bg-slate-700' : 'bg-slate-100'} flex items-center justify-center`}>
+                                            {p.photoUrl ? (
+                                                <img src={p.photoUrl} alt={p.fullName} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <User className="w-4 h-4 text-slate-400" />
+                                            )}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <h4 className={`text-xs font-bold truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{p.fullName}</h4>
+                                            <p className="text-[9px] text-slate-500 truncate">{p.role} • {p.email}</p>
+                                        </div>
+                                        <div className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}>
+                                            {p.department || 'HSE'}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="py-8 text-center text-[10px] italic text-slate-400">
+                                    No other profiles found.
+                                </div>
+                            )}
+                        </div>
                       </div>
                     </div>
 
                     {/* Employee Management Section */}
-                    <div>
+                    <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
                       <div className="flex items-center gap-3 mb-6">
                         <Users className="w-5 h-5 text-emerald-500" />
                         <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Employee Management</h3>
@@ -1549,77 +1757,119 @@ export default function App() {
                         >
                           <Plus className="w-4 h-4" /> Add New Employee
                         </button>
-                        <button 
-                          onClick={handleSeedLeadership}
-                          disabled={isSeeding}
-                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${
-                            confirmSeed 
-                              ? 'bg-amber-600 text-white animate-pulse' 
-                              : isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'
-                          } hover:opacity-80`}
-                        >
-                          <Database className="w-4 h-4" /> 
-                          {isSeeding ? 'Importing...' : confirmSeed ? 'Click again to CONFIRM Import' : 'Import Leadership Data'}
-                        </button>
+                        <div className="relative w-full sm:w-auto">
+                            <input 
+                              type="file" 
+                              accept=".csv"
+                              onChange={handleImportEmployees}
+                              className="hidden"
+                              id="csv-upload"
+                            />
+                            <div className="flex flex-col gap-1">
+                                <label 
+                                    htmlFor="csv-upload"
+                                    className="cursor-pointer w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
+                                >
+                                    {importLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                                    {importLoading ? 'Importing...' : 'Import CSV'}
+                                </label>
+                                <span className="text-[9px] text-slate-400">Required headers: employee_no, employee_name, ...</span>
+                            </div>
+                        </div>
                       </div>
 
-                      {/* Admin Search Results List */}
+                      {/* Admin Search Results */}
                       {adminSearchResults.length > 0 && (
-                        <div className="space-y-3">
-                          {adminSearchResults.map((emp) => (
-                            <div 
-                              key={emp.id}
-                              className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${isDarkMode ? 'bg-slate-700/30 border-slate-600 hover:bg-slate-700/50' : 'bg-white border-slate-200 hover:border-indigo-200 shadow-sm'}`}
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className={`w-10 h-10 flex-shrink-0 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
-                                  {emp.sn}
-                                </div>
-                                <div>
-                                  <h4 className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{emp.employee_name}</h4>
-                                  <p className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{emp.employee_no} • {emp.designation}</p>
-                                </div>
-                              </div>
+                        <div className="space-y-3 mt-4">
+                          {/* Bulk Actions Panel */}
+                          {selectedEmployeeIds.size > 0 && (
+                            <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-center gap-4 ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-indigo-50 border-indigo-200'}`}>
+                                <span className="text-xs font-bold">{selectedEmployeeIds.size} employees selected:</span>
+                                
+                                <select 
+                                    onChange={(e) => setBulkUpdateField(e.target.value)}
+                                    value={bulkUpdateField}
+                                    className={`text-xs rounded-lg p-2 border outline-none ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-300'}`}
+                                >
+                                    <option value="">Select Field to Update</option>
+                                    <option value="department">Department</option>
+                                    <option value="project">Project</option>
+                                    <option value="designation">Designation</option>
+                                </select>
 
-                              <div className="flex items-center gap-2 sm:self-center">
+                                <input 
+                                    type="text"
+                                    placeholder="New Value..."
+                                    value={bulkUpdateValue}
+                                    onChange={(e) => setBulkUpdateValue(e.target.value)}
+                                    className={`text-xs rounded-lg p-2 border outline-none ${isDarkMode ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-300'}`}
+                                />
+
                                 <button 
-                                  onClick={() => {
-                                    setEditingEmployee(emp);
-                                    setShowEmployeeForm(true);
-                                  }}
-                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-indigo-400 hover:bg-indigo-900/30' : 'text-indigo-600 hover:bg-indigo-50'}`}
-                                  title="Edit Employee"
+                                    onClick={handleBulkUpdate}
+                                    className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors shadow-sm"
                                 >
-                                  <Edit2 className="w-4 h-4" />
+                                    Apply Changes
                                 </button>
-                                <button 
-                                  onClick={() => handleDeleteEmployee(emp.id.toString())}
-                                  className={`p-2 rounded-lg transition-colors flex items-center gap-1 ${
-                                    confirmDeleteId === emp.id.toString() 
-                                      ? 'bg-rose-600 text-white animate-pulse' 
-                                      : isDarkMode ? 'text-rose-400 hover:bg-rose-900/30' : 'text-rose-500 hover:bg-rose-50'
-                                  }`}
-                                  title={confirmDeleteId === emp.id.toString() ? "Click again to confirm delete" : "Delete Employee"}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  {confirmDeleteId === emp.id.toString() && <span className="text-[8px] font-bold">CONFIRM?</span>}
-                                </button>
-                                <button 
-                                  onClick={() => handleViewEmployee(emp)}
-                                  className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-500 hover:bg-slate-100'}`}
-                                  title="View Details"
-                                >
-                                  <ChevronRight className="w-4 h-4" />
-                                </button>
-                              </div>
                             </div>
-                          ))}
+                          )}
+
+                          <h4 className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Search Results</h4>
+                          <div className="grid grid-cols-1 gap-2">
+                            {adminSearchResults.map(emp => (
+                              <div key={emp.id || emp.employee_no} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-100 hover:border-indigo-200 shadow-sm'}`}>
+                                <div className="flex items-center gap-3">
+                                  <input 
+                                    type="checkbox"
+                                    checked={selectedEmployeeIds.has(String(emp.employee_no))}
+                                    onChange={(e) => {
+                                      const newSet = new Set(selectedEmployeeIds);
+                                      if (e.target.checked) newSet.add(String(emp.employee_no));
+                                      else newSet.delete(String(emp.employee_no));
+                                      setSelectedEmployeeIds(newSet);
+                                    }}
+                                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                                  />
+                                  <div className={`w-8 h-8 rounded bg-indigo-50 flex items-center justify-center`}>
+                                    <User className="w-4 h-4 text-indigo-500" />
+                                  </div>
+                                  <div>
+                                    <div className={`text-xs font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{emp.employee_name}</div>
+                                    <div className="text-[9px] text-slate-500">{emp.employee_no} • {emp.designation}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingEmployee(emp);
+                                      setShowEmployeeForm(true);
+                                    }}
+                                    className={`p-1.5 rounded hover:bg-indigo-50 text-indigo-600 transition-colors`}
+                                    title="Edit"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                        if (confirm(`Are you sure you want to delete ${emp.employee_name}?`)) {
+                                            handleDeleteEmployee(String(emp.employee_no));
+                                        }
+                                    }}
+                                    className={`p-1.5 rounded hover:bg-rose-50 text-rose-600 transition-colors`}
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
-
+                      
                       {adminSearchTerm.length >= 2 && adminSearchResults.length === 0 && (
-                        <div className={`p-12 text-center rounded-xl border-2 border-dashed ${isDarkMode ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
-                          <p className="text-sm font-medium">No results found for "{adminSearchTerm}"</p>
+                        <div className="py-4 text-center text-xs italic text-slate-400">
+                          No employees found matching "{adminSearchTerm}"
                         </div>
                       )}
                     </div>
@@ -1843,6 +2093,7 @@ export default function App() {
         </div>
       </footer>
 
+
       {/* Authentication Modal */}
       <AnimatePresence>
         {showAuthModal && (
@@ -1857,22 +2108,22 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl"
+              className={`rounded-2xl p-6 max-w-md w-full shadow-2xl ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                  <div className="bg-indigo-50 p-2 rounded-lg">
+                  <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
                     <ShieldCheck className="w-5 h-5 text-indigo-600" />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-800">Admin Portal Access</h3>
-                    <p className="text-sm text-slate-500">Verify your HSE Leadership credentials</p>
+                    <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Admin Portal Access</h3>
+                    <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Verify your HSE Leadership credentials</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowAuthModal(false)}
-                  className="text-slate-400 hover:text-slate-600 transition-colors"
+                  className={`transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1880,7 +2131,7 @@ export default function App() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                  <label className={`block text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                     Email Address
                   </label>
                   <input
@@ -1889,12 +2140,11 @@ export default function App() {
                     onChange={(e) => setAuthEmail(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleAuthSubmit()}
                     placeholder="Enter your authorized email"
-                    className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                    className={`w-full px-4 py-3 rounded-lg outline-none transition-all ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white focus:ring-indigo-500' : 'bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 text-slate-800'}`}
                     autoFocus
                   />
                 </div>
 
-                
                 <div className="flex gap-3">
                   <button
                     onClick={handleAuthSubmit}
@@ -1904,7 +2154,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setShowAuthModal(false)}
-                    className="flex-1 bg-slate-100 text-slate-600 px-4 py-3 rounded-lg font-bold hover:bg-slate-200 transition-colors"
+                    className={`flex-1 px-4 py-3 rounded-lg font-bold transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                   >
                     Cancel
                   </button>

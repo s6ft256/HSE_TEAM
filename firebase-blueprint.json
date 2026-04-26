@@ -41,17 +41,6 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email"]
-    },
-    "Leadership": {
-      "title": "Leadership",
-      "description": "HSE Leadership team members",
-      "type": "object",
-      "properties": {
-        "name": { "type": "string" },
-        "role": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "phone": { "type": "string" }
-      }
     }
   },
   "firestore": {
@@ -62,10 +51,6 @@
     "management_profiles": {
       "schema": "ManagementProfile",
       "description": "User profiles for managers"
-    },
-    "hse_leadership": {
-      "schema": "Leadership",
-      "description": "HSE Leadership & Documentation team"
     }
   }
 }
