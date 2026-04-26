@@ -528,47 +528,58 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     setImportLoading(true);
+    setImportStatus(null);
     
     const reader = new FileReader();
     reader.onerror = (err) => {
         console.error('FileReader error:', err);
-        alert('File reading failed: ' + err);
+        setImportStatus({ type: 'error', message: 'File reading failed: ' + err });
         setImportLoading(false);
     };
     reader.onload = async (event) => {
         try {
-            console.log('File loaded in FileReader. Event target result:', typeof event.target?.result);
             if (!event.target?.result) {
                 throw new Error('FileReader result is empty');
             }
             const data = new Uint8Array(event.target?.result as ArrayBuffer);
-            console.log('Data length:', data.length);
             const workbook = XLSX.read(data, {type: 'array'});
             
             console.log('Available sheets:', workbook.SheetNames);
             
-            const listSheet = workbook.Sheets['List'];
-            const sheet2 = workbook.Sheets['sheet2'];
-            const sheet3 = workbook.Sheets['sheet3'];
+            let targetSheetName = '';
+            let targetData: any[] = [];
             
-            const pending = {
-                list: listSheet ? XLSX.utils.sheet_to_json(listSheet) : [],
-                sheet2: sheet2 ? XLSX.utils.sheet_to_json(sheet2) : [],
-                sheet3: sheet3 ? XLSX.utils.sheet_to_json(sheet3) : [],
-            };
+            // Priority 1: Look for a sheet that contains employee_no column
+            for (const name of workbook.SheetNames) {
+                const sheet = workbook.Sheets[name];
+                const json: any[] = XLSX.utils.sheet_to_json(sheet);
+                if (json.length > 0 && Object.keys(json[0]).some(key => key.toLowerCase() === 'employee_no')) {
+                    targetSheetName = name;
+                    targetData = json;
+                    break;
+                }
+            }
             
-            console.log('Parsed data:', pending);
+            // Priority 2: Fallback to the first sheet if nothing found with employee_no
+            if (!targetSheetName && workbook.SheetNames.length > 0) {
+                targetSheetName = workbook.SheetNames[0];
+                targetData = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheetName]);
+            }
             
-            if (pending.list.length === 0 && pending.sheet2.length === 0 && pending.sheet3.length === 0) {
-                alert(`No data found. Available sheets in file: ${workbook.SheetNames.join(', ')}`);
+            if (targetData.length === 0) {
+                setImportStatus({ type: 'error', message: `No data found in any sheet. Available sheets: ${workbook.SheetNames.join(', ')}` });
                 return;
             }
 
-            setPendingData(pending);
-            alert('File parsed successfully! You should see the preview section now.');
+            setPendingData({
+                sheetName: targetSheetName,
+                data: targetData
+            });
+            setPreviewSheet(targetSheetName);
+            setImportStatus({ type: 'success', message: `File parsed! Found data in sheet: "${targetSheetName}"` });
         } catch (err: any) {
             console.error('Import error:', err);
-            alert('Import failed: ' + err.message);
+            setImportStatus({ type: 'error', message: 'Import failed: ' + err.message });
         } finally {
             setImportLoading(false);
         }
@@ -577,42 +588,51 @@ export default function App() {
   };
 
   const handleProceedImport = async () => {
-    if (!pendingData) return;
+    if (!pendingData || !pendingData.data) return;
     setImportLoading(true);
     try {
         const batch = writeBatch(db);
+        const data = pendingData.data as any[];
         
-        if (pendingData.list) {
+        const hasEmployeeNo = data.length > 0 && Object.keys(data[0]).some(key => key.toLowerCase() === 'employee_no');
+        
+        if (hasEmployeeNo) {
             const seenEmployeeNos = new Set();
-            for (const emp of pendingData.list as any[]) {
-                if (emp.employee_no) {
-                    const empNo = String(emp.employee_no);
+            for (const emp of data) {
+                // Find the exact key for employee_no (might be case sensitive or have spaces)
+                const empNoKey = Object.keys(emp).find(k => k.toLowerCase() === 'employee_no');
+                if (empNoKey && emp[empNoKey]) {
+                    const empNo = String(emp[empNoKey]);
                     if (seenEmployeeNos.has(empNo)) continue;
                     
                     seenEmployeeNos.add(empNo);
                     const docRef = doc(db, 'hse_employees', empNo);
-                    batch.set(docRef, emp, { merge: true });
+                    
+                    // Normalize keys to match our interface if possible
+                    const normalizedEmp: any = {};
+                    Object.keys(emp).forEach(k => {
+                        const lowKey = k.toLowerCase().replace(/\s+/g, '_');
+                        normalizedEmp[lowKey] = emp[k];
+                    });
+                    
+                    batch.set(docRef, normalizedEmp, { merge: true });
                 }
             }
-        }
-        if (pendingData.sheet2) {
-            for (const row of pendingData.sheet2 as any[]) {
-                const colRef = collection(db, 'sheet2_data');
+            await batch.commit();
+            setImportStatus({ type: 'success', message: `Successfully imported ${seenEmployeeNos.size} employees from "${pendingData.sheetName}"` });
+        } else {
+            // Generic import for other data types if no employee_no
+            for (const row of data) {
+                const colRef = collection(db, 'imported_data');
                 const docRef = doc(colRef);
-                batch.set(docRef, row, { merge: true });
+                batch.set(docRef, row);
             }
-        }
-        if (pendingData.sheet3) {
-            for (const row of pendingData.sheet3 as any[]) {
-                const colRef = collection(db, 'sheet3_data');
-                const docRef = doc(colRef);
-                batch.set(docRef, row, { merge: true });
-            }
+            await batch.commit();
+            setImportStatus({ type: 'success', message: `Successfully imported ${data.length} records to default collection from "${pendingData.sheetName}"` });
         }
         
-        await batch.commit();
-        setImportStatus({ type: 'success', message: 'Import complete for List, sheet2, and sheet3!' });
         setPendingData(null);
+        setPreviewSheet(null);
     } catch (err: any) {
         console.error('Import error:', err);
         setImportStatus({ type: 'error', message: 'Import failed: ' + err.message });
@@ -1931,41 +1951,30 @@ export default function App() {
                             <div className={`p-6 rounded-xl border-2 border-indigo-200 ${isDarkMode ? 'bg-slate-800 border-indigo-900/50' : 'bg-white shadow-xl shadow-indigo-100'}`}>
                                 <h4 className="font-bold mb-4 flex items-center gap-2">
                                   <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
-                                  Import Preview
+                                  Import Preview: {pendingData.sheetName}
                                 </h4>
-                                <div className="grid grid-cols-3 gap-4 mb-6">
-                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
-                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">List Sheet</div>
-                                        <div className="text-xl font-bold">{pendingData.list?.length || 0}</div>
-                                    </div>
-                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
-                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Sheet2</div>
-                                        <div className="text-xl font-bold">{pendingData.sheet2?.length || 0}</div>
-                                    </div>
-                                    <div className={`p-3 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
-                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Sheet3</div>
-                                        <div className="text-xl font-bold">{pendingData.sheet3?.length || 0}</div>
+                                <div className="grid grid-cols-1 gap-4 mb-6">
+                                    <div className={`p-4 rounded-lg border ${isDarkMode ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-100'}`}>
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Records found in "{pendingData.sheetName}"</div>
+                                        <div className="text-2xl font-bold">{pendingData.data?.length || 0}</div>
                                     </div>
                                 </div>
 
                                 <div className="flex flex-wrap gap-2 mb-4">
-                                  {['list', 'sheet2', 'sheet3'].map(sheet => (
                                     <button
-                                      key={sheet}
-                                      onClick={() => setPreviewSheet(previewSheet === sheet ? null : sheet)}
+                                      onClick={() => setPreviewSheet(previewSheet ? null : pendingData.sheetName)}
                                       className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                        previewSheet === sheet 
+                                        previewSheet 
                                           ? 'bg-indigo-600 text-white shadow-md' 
                                           : isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-white border border-slate-200 text-slate-600 hover:border-indigo-300'
                                       }`}
                                     >
-                                      {previewSheet === sheet ? 'Hide Preview' : `Preview ${sheet.toUpperCase()}`}
+                                      {previewSheet ? 'Hide Preview' : 'Show Preview'}
                                     </button>
-                                  ))}
                                 </div>
 
                                 <AnimatePresence>
-                                  {previewSheet && pendingData[previewSheet]?.length > 0 && (
+                                  {previewSheet && pendingData.data?.length > 0 && (
                                     <motion.div 
                                       initial={{ opacity: 0, height: 0 }}
                                       animate={{ opacity: 1, height: 'auto' }}
@@ -1976,23 +1985,23 @@ export default function App() {
                                         <table className="w-full border-collapse">
                                           <thead className="sticky top-0 bg-inherit shadow-sm">
                                             <tr>
-                                              {Object.keys(pendingData[previewSheet][0]).map(key => (
+                                              {Object.keys(pendingData.data[0]).map(key => (
                                                 <th key={key} className="text-left font-bold border-b p-2 whitespace-nowrap bg-indigo-50/50 uppercase tracking-tighter">{key}</th>
                                               ))}
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {pendingData[previewSheet].slice(0, 5).map((row: any, idx: number) => (
+                                            {pendingData.data.slice(0, 5).map((row: any, idx: number) => (
                                               <tr key={idx} className="hover:bg-indigo-50/20">
                                                 {Object.values(row).map((val: any, vIdx: number) => (
                                                   <td key={vIdx} className="border-b p-2 opacity-80">{String(val)}</td>
                                                 ))}
                                               </tr>
                                             ))}
-                                            {pendingData[previewSheet].length > 5 && (
+                                            {pendingData.data.length > 5 && (
                                               <tr>
                                                 <td colSpan={100} className="p-2 text-center text-slate-400 italic">
-                                                  And {pendingData[previewSheet].length - 5} more records...
+                                                  And {pendingData.data.length - 5} more records...
                                                 </td>
                                               </tr>
                                             )}
