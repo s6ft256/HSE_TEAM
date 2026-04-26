@@ -204,12 +204,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         '81-100': parsedData.filter((e: any) => e.kpiNumeric > 80).length,
       };
 
-      const employeesPerProject = safeData.reduce((acc: any, curr: any) => {
-        if (curr.project) {
-          acc[curr.project] = (acc[curr.project] || 0) + 1;
-        }
-        return acc;
-      }, {});
+      const totalEmployees = safeData.length;
+      const totalProjects = new Set(safeData.map((e: any) => e.project).filter(Boolean)).size;
+      const totalLineManagers = new Set(safeData.map((e: any) => e.line_manager).filter(Boolean)).size;
+      const totalAreaManagers = new Set(safeData.map((e: any) => e.area_manager).filter(Boolean)).size;
 
       const qualificationBreakdown = safeData.reduce((acc: any, curr: any) => {
         if (curr.qualification) {
@@ -227,9 +225,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.json({
         kpiDistribution,
-        employeesPerProject,
         qualificationBreakdown,
-        designationBreakdown
+        designationBreakdown,
+        totalEmployees,
+        totalProjects,
+        totalLineManagers,
+        totalAreaManagers
       });
     }
 

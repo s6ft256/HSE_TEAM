@@ -85,9 +85,12 @@ interface Employee {
 
 interface Stats {
   kpiDistribution: Record<string, number>;
-  employeesPerProject: Record<string, number>;
   qualificationBreakdown: Record<string, number>;
   designationBreakdown: Record<string, number>;
+  totalEmployees?: number;
+  totalProjects?: number;
+  totalLineManagers?: number;
+  totalAreaManagers?: number;
 }
 
 interface ManagementProfile {
@@ -100,6 +103,43 @@ interface ManagementProfile {
   officeLocation: string;
   photoUrl?: string;
   updatedAt?: string;
+}
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 export default function App() {
@@ -129,10 +169,10 @@ export default function App() {
         });
     } else if (stats) {
         setOverviewStats({
-            total: Object.values(stats.employeesPerProject).reduce((a: number, b: number) => a + b, 0),
-            projects: Object.keys(stats.employeesPerProject).length,
-            lm: globalLineManagers.length,
-            am: globalAreaManagers.length,
+            total: stats.totalEmployees || 0,
+            projects: stats.totalProjects || 0,
+            lm: stats.totalLineManagers || 0,
+            am: stats.totalAreaManagers || 0,
         });
     }
   }, [isAdminMode, allEmployees, stats, globalLineManagers, globalAreaManagers]);
@@ -175,9 +215,12 @@ export default function App() {
   // Monitor session state
   useEffect(() => {
     if (isAdminMode) {
-      const q = collection(db, 'hse_employees');
+      const path = 'hse_employees';
+      const q = collection(db, path);
       const unsubscribe = onSnapshot(q, (snapshot) => {
         setAllEmployees(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Employee)));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, path);
       });
       return () => unsubscribe();
     }
@@ -189,13 +232,15 @@ export default function App() {
       if (authorizedUsers.includes(email)) {
         setIsAdminMode(true);
         // Using email as UID for the profile fetch since we removed real Auth
-        const profileRef = doc(db, 'management_profiles', email.replace(/[.@]/g, '_'));
+        const profileId = email.replace(/[.@]/g, '_');
+        const path = `management_profiles/${profileId}`;
+        const profileRef = doc(db, 'management_profiles', profileId);
         getDoc(profileRef).then(snap => {
           if (snap.exists()) {
             setProfile(snap.data() as ManagementProfile);
           } else {
             const initialProfile: ManagementProfile = {
-              uid: email.replace(/[.@]/g, '_'),
+              uid: profileId,
               email: email,
               fullName: email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
               phoneNumber: '',
@@ -206,7 +251,7 @@ export default function App() {
             };
             setProfile(initialProfile);
           }
-        });
+        }).catch(err => handleFirestoreError(err, OperationType.GET, path));
       } else {
         setIsAdminMode(false);
         setProfile(null);
@@ -397,13 +442,17 @@ export default function App() {
     try {
       for (const email of authorizedUsers) {
         const docId = email.toLowerCase().replace(/[.@]/g, '_');
+        const path = `management_profiles/${docId}`;
         const docRef = doc(db, 'management_profiles', docId);
-        const snap = await getDoc(docRef);
+        const snap = await getDoc(docRef).catch(err => {
+            handleFirestoreError(err, OperationType.GET, path);
+            return null;
+        });
         
-        if (!snap.exists()) {
+        if (snap && !snap.exists()) {
           // Create a placeholder profile
           const name = email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
-          await setDoc(docRef, {
+          const payload = {
             email: email.toLowerCase(),
             fullName: name,
             role: 'HSE Leadership',
@@ -411,13 +460,17 @@ export default function App() {
             officeLocation: 'Head Office',
             uid: docId,
             updatedAt: new Date().toISOString()
-          });
+          };
+          await setDoc(docRef, payload).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
         }
       }
       alert('Leadership profiles synced successfully!');
       // Refresh list
-      const snapshot = await getDocs(collection(db, 'management_profiles'));
-      setAllProfiles(snapshot.docs.map(d => d.data() as ManagementProfile));
+      const snapshot = await getDocs(collection(db, 'management_profiles')).catch(err => {
+          handleFirestoreError(err, OperationType.LIST, 'management_profiles');
+          return { docs: [] } as any;
+      });
+      setAllProfiles(snapshot.docs.map((d: any) => d.data() as ManagementProfile));
     } catch (err: any) {
       console.error('Sync error:', err);
       alert('Sync failed: ' + err.message);
@@ -578,9 +631,26 @@ export default function App() {
                     // Normalize keys to match our interface if possible
                     const normalizedEmp: any = {};
                     Object.keys(emp).forEach(k => {
-                        const lowKey = k.toLowerCase().replace(/\s+/g, '_');
+                        // More robust normalization: lowercase, remove special chars, trim
+                        const lowKey = k.toLowerCase().trim()
+                            .replace(/[.\s()\-]+/g, '_') // Replace dots, spaces, parens, hyphens with _
+                            .replace(/_+/g, '_')         // dedupe underscores
+                            .replace(/^_+|_+$/g, '');    // trim underscores
+                        
                         normalizedEmp[lowKey] = emp[k];
                     });
+                    
+                    // Specific mapping for common employee fields if missing
+                    if (!normalizedEmp.employee_no && empNoKey) {
+                        normalizedEmp.employee_no = String(emp[empNoKey]);
+                    }
+                    
+                    if (!normalizedEmp.employee_name) {
+                        const nameKey = Object.keys(emp).find(k => 
+                            ['name', 'full name', 'employee name', 'staff name'].includes(k.toLowerCase().trim())
+                        );
+                        if (nameKey) normalizedEmp.employee_name = emp[nameKey];
+                    }
                     
                     batch.set(docRef, normalizedEmp, { merge: true });
                 }
@@ -618,6 +688,7 @@ export default function App() {
 
     try {
       const docId = String(editingEmployee.employee_no);
+      const path = `hse_employees/${docId}`;
       const docRef = doc(db, 'hse_employees', docId);
       
       const payload = {
@@ -628,7 +699,7 @@ export default function App() {
       // Ensure SN is a number
       if (payload.sn) payload.sn = Number(payload.sn);
       
-      await setDoc(docRef, payload, { merge: true });
+      await setDoc(docRef, payload, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
       
       alert('Employee record saved successfully!');
       setShowEmployeeForm(false);
@@ -649,8 +720,9 @@ export default function App() {
 
   const handleDeleteEmployee = async (id: string) => {
     try {
+      const path = `hse_employees/${id}`;
       const docRef = doc(db, 'hse_employees', String(id));
-      await deleteDoc(docRef);
+      await deleteDoc(docRef).catch(err => handleFirestoreError(err, OperationType.DELETE, path));
       alert('Record deleted.');
       setAdminSearchResults(prev => prev.filter(emp => String(emp.employee_no) !== String(id)));
     } catch (err: any) {
@@ -666,10 +738,11 @@ export default function App() {
     try {
       const batch = writeBatch(db);
       for (const id of selectedEmployeeIds) {
+        const path = `hse_employees/${id}`;
         const docRef = doc(db, 'hse_employees', id);
         batch.update(docRef, { [bulkUpdateField]: bulkUpdateValue, updated_at: new Date().toISOString() });
       }
-      await batch.commit();
+      await batch.commit().catch(err => handleFirestoreError(err, OperationType.WRITE, 'bulk_update'));
       alert(`Bulk updated ${selectedEmployeeIds.size} employees.`);
       setSelectedEmployeeIds(new Set());
       setBulkUpdateField('');
@@ -1105,7 +1178,7 @@ export default function App() {
                           </td>
                           <td className="px-5 py-4 text-right underline underline-offset-2">
                             <button 
-                              onClick={() => setSearchTerm(emp.employee_no)}
+                              onClick={() => handleViewEmployee(emp)}
                               className="text-indigo-600 font-bold text-xs hover:text-indigo-800 transition-colors"
                             >
                               Details

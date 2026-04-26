@@ -22,8 +22,6 @@ try {
   console.error('Firebase initialization error:', e);
 }
 
-app.use(express.json());
-
 // Middleware to check for Firebase configuration
 app.use((req, res, next) => {
   if (!db && req.path.startsWith('/api') && req.path !== '/api/health') {
@@ -236,12 +234,10 @@ app.get('/api/stats', async (req, res) => {
       '81-100': parsedData.filter((e: any) => e.kpiNumeric > 80).length,
     };
 
-    const employeesPerProject = safeData.reduce((acc: any, curr: any) => {
-      if (curr.project) {
-        acc[curr.project] = (acc[curr.project] || 0) + 1;
-      }
-      return acc;
-    }, {});
+    const totalEmployees = safeData.length;
+    const totalProjects = new Set(safeData.map((e: any) => e.project).filter(Boolean)).size;
+    const totalLineManagers = new Set(safeData.map((e: any) => e.line_manager).filter(Boolean)).size;
+    const totalAreaManagers = new Set(safeData.map((e: any) => e.area_manager).filter(Boolean)).size;
 
     const qualificationBreakdown = safeData.reduce((acc: any, curr: any) => {
       if (curr.qualification) {
@@ -259,9 +255,12 @@ app.get('/api/stats', async (req, res) => {
 
     res.json({
       kpiDistribution,
-      employeesPerProject,
       qualificationBreakdown,
-      designationBreakdown
+      designationBreakdown,
+      totalEmployees,
+      totalProjects,
+      totalLineManagers,
+      totalAreaManagers
     });
   } catch (err: any) {
     res.status(200).json({ error: err.message });

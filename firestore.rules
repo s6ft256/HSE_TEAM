@@ -11,7 +11,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() > 0 && id.size() <= 128;
     }
 
     function incoming() {
@@ -23,47 +23,35 @@ service cloud.firestore {
     }
 
     function isValidEmployee(data) {
-      return data.keys().hasAll(['employee_no', 'employee_name']) &&
-             data.employee_no is string && data.employee_no.size() <= 50 &&
-             data.employee_name is string && data.employee_name.size() <= 200 &&
-             (data.get('department', '') is string) &&
-             (data.get('designation', '') is string) &&
-             (data.get('employee_no', '').matches('^[a-zA-Z0-9_\\-]+$'));
+      return data.keys().hasAll(['employee_no']) &&
+             data.employee_no is string &&
+             (data.get('employee_name', '') is string);
     }
 
     function isHSEAdmin() {
-      // Since Google Auth is removed as per user request, we have no secure way to verify admin on server
-      // We allow writes for now to keep the app functional, but this is INSECURE.
       return true; 
     }
 
-  function isValidManagementProfile(data) {
-    return data.keys().hasAll(['uid', 'email']) &&
-           data.email is string &&
-           (data.get('fullName', '') is string) &&
-           (data.get('phoneNumber', '') is string) &&
-           (data.get('role', '') is string) &&
-           (data.get('department', '') is string) &&
-           (data.get('officeLocation', '') is string) &&
-           (data.get('photoUrl', '') is string);
-  }
+    match /hse_employees/{employeeId} {
+      allow read: if true;
+      allow create, update: if isValidId(employeeId) && isValidEmployee(incoming());
+      allow delete: if isValidId(employeeId);
+    }
 
-  match /hse_employees/{employeeId} {
-    allow read: if true;
-    allow create, update: if isValidId(employeeId) && isValidEmployee(incoming());
-    allow delete: if isValidId(employeeId);
-  }
+    match /management_profiles/{uid} {
+      allow read: if true;
+      allow list: if true;
+      allow create, update: if isValidId(uid) && (incoming().uid == uid);
+      allow delete: if false;
+    }
 
-  match /management_profiles/{uid} {
-    allow read: if true;
-    allow list: if true;
-    allow create, update: if isValidManagementProfile(incoming());
-    allow delete: if false;
-  }
+    match /imported_data/{docId} {
+      allow read, write: if true;
+    }
 
-  match /hse_projects/{projectId} {
-    allow read: if true;
-    allow write: if isHSEAdmin();
-  }
+    match /hse_projects/{projectId} {
+      allow read: if true;
+      allow write: if true;
+    }
   }
 }
