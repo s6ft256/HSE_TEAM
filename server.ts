@@ -215,6 +215,17 @@ app.delete('/api/employees/:id', async (req, res) => {
   }
 });
 
+app.get('/api/all-employees', async (req, res) => {
+  try {
+    if (!db) throw new Error('DB not initialized');
+    const snapshot = await getDocs(collection(db, 'hse_employees'));
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(data);
+  } catch (err: any) {
+    res.status(200).json({ error: err.message });
+  }
+});
+
 // Stats API for charts
 app.get('/api/stats', async (req, res) => {
   try {
