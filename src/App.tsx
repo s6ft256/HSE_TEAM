@@ -1,7 +1,6 @@
 import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { 
   Users, 
-  Briefcase, 
   MapPin, 
   BarChart3, 
   PieChart as PieChartIcon, 
@@ -31,7 +30,9 @@ import {
   AlertTriangle,
   Building2,
   Badge,
-  ChevronDown
+  ChevronDown,
+  ShieldOff,
+  Settings
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -251,6 +252,18 @@ export default function App() {
     }
   }, [isAdminMode]);
 
+  // Load employees for Chart tab (available to all users)
+  useEffect(() => {
+    const path = 'hse_employees';
+    const q = collection(db, path);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setAllEmployees(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Employee)));
+    }, (error) => {
+      console.error('Error loading employees for Chart:', error);
+    });
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     if (sessionEmail) {
       const email = sessionEmail.toLowerCase();
@@ -342,26 +355,77 @@ export default function App() {
   const [previewSheet, setPreviewSheet] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  useEffect(() => {
-    if (activeTab === 'Chart' && allEmployees.length === 0) {
-      setLoading(true);
-      fetch('/api/all-employees')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setAllEmployees(data);
-          }
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error('Failed to fetch all employees for chart:', err);
-          setLoading(false);
-        });
-    }
-  }, [activeTab, allEmployees.length]);
-
   const [refreshing, setRefreshing] = useState(false);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [draggedEmployee, setDraggedEmployee] = useState<Employee | null>(null);
+  const [editingNode, setEditingNode] = useState<{ type: 'am' | 'lm', name: string, areaManager?: string } | null>(null);
+
+  // Helper function to get initials from name
+  const getInitials = (name: string): string => {
+    return name
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Helper function to generate a consistent color based on name
+  const getAvatarColor = (name: string): string => {
+    const colors = [
+      'bg-indigo-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500',
+      'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500',
+      'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500',
+      'bg-sky-500', 'bg-blue-500', 'bg-violet-500', 'bg-fuchsia-500'
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  // Handle node editing
+  const handleNodeEdit = async (newName: string, type: 'am' | 'lm', oldName: string) => {
+    if (!newName.trim() || newName === oldName) {
+      setEditingNode(null);
+      return;
+    }
+
+    try {
+      // Update all employees that reference this manager
+      const employeesToUpdate = allEmployees.filter(emp => 
+        type === 'am' ? emp.area_manager === oldName : emp.line_manager === oldName
+      );
+
+      // Update each employee in Firestore
+      for (const emp of employeesToUpdate) {
+        const docRef = doc(db, 'hse_employees', String(emp.employee_no));
+        if (type === 'am') {
+          await updateDoc(docRef, { area_manager: newName });
+        } else {
+          await updateDoc(docRef, { line_manager: newName });
+        }
+      }
+
+      // Update local state
+      const updatedEmployees = allEmployees.map(emp => {
+        if (type === 'am' && emp.area_manager === oldName) {
+          return { ...emp, area_manager: newName };
+        } else if (type === 'lm' && emp.line_manager === oldName) {
+          return { ...emp, line_manager: newName };
+        }
+        return emp;
+      });
+      setAllEmployees(updatedEmployees);
+
+      setEditingNode(null);
+    } catch (error) {
+      console.error('Error updating manager name:', error);
+      setEditingNode(null);
+    }
+  };
+  const [assignmentModal, setAssignmentModal] = useState<{ isOpen: boolean; employee: Employee | null }>({ isOpen: false, employee: null });
 
   const loadData = async () => {
     setRefreshing(true);
@@ -1031,17 +1095,14 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="max-w-7xl mx-auto space-y-6">
+      <main className={`flex-1 overflow-y-auto ${activeTab === 'Chart' ? 'px-0 py-0' : 'px-4 sm:px-6 lg:px-8 py-6'}`}>
+        <div className={`${activeTab === 'Chart' ? 'w-full h-full m-0 p-0' : 'max-w-7xl mx-auto'} space-y-6`}>
           {activeTab === 'Dashboard' && (
             <>
               {/* Filter Section - STICKY */}
               <section className={`p-4 rounded-2xl shadow-sm border flex flex-col md:flex-row items-end gap-4 glass-morphism ${isDarkMode ? 'border-border-dark shadow-dark-bg-primary/20' : 'border-border-light shadow-light-bg-secondary/50'}`}>
                 <div className="flex-1 w-full space-y-1.5">
                   <label className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode ? 'text-dark-text-muted' : 'text-text-muted'}`}>
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${isDarkMode ? 'bg-primary-900/50' : 'bg-primary-50/50'}`}>
-                      <Briefcase className="w-3 h-3 text-primary-500" />
-                    </div>
                     Project
                   </label>
                   <select 
@@ -1223,7 +1284,7 @@ export default function App() {
                     <div className="space-y-4">
                       <div>
                         <div className="text-[10px] font-bold text-secondary-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                          <Briefcase className="w-3 h-3" /> Professional Details
+                          Professional Details
                         </div>
                         <div className="space-y-3">
                           <div className="flex flex-col">
@@ -1528,262 +1589,470 @@ export default function App() {
           )}
 
           {activeTab === 'Chart' && (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
-              <div className={`bento-card p-1 ${isDarkMode ? 'bg-dark-bg-elevated' : 'bg-light-bg-elevated'}`}>
-                <div className="p-8 pb-4">
-                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 border-b pb-8 border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center gap-5">
-                      <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transform -rotate-6 ${isDarkMode ? 'bg-indigo-500/20 text-indigo-400' : 'bg-indigo-600 text-white'}`}>
-                        <Users className="w-7 h-7" />
-                      </div>
-                      <div>
-                        <h2 className={`text-2xl font-display font-black tracking-tight ${isDarkMode ? 'text-dark-text-primary' : 'text-text-primary'}`}>
-                          Organizational Network
-                        </h2>
-                        <p className={`text-sm font-medium ${isDarkMode ? 'text-dark-text-muted' : 'text-text-muted'}`}>
-                          Interactive hierarchy and reporting relationships
-                        </p>
-                      </div>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="w-full h-full m-0 p-0">
+              <div className={`w-full h-full m-0 p-0 ${isDarkMode ? 'bg-dark-bg-elevated' : 'bg-light-bg-elevated'}`}>
+                <div className={`p-4 border-b flex flex-col gap-3 ${isDarkMode ? 'border-border-dark' : 'border-border-light'}`}>
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/50' : 'bg-indigo-50'}`}>
+                      <BarChart3 className="w-5 h-5 text-indigo-500" />
                     </div>
-                    
-                    <div className="flex flex-col gap-2 min-w-[240px]">
-                      <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                        Filter by Project
-                      </label>
-                      <div className="relative">
-                        <select
-                          value={selectedProject || ''}
-                          onChange={(e) => {
-                            setSelectedProject(e.target.value);
-                            setExpandedNodes(new Set()); // Collapse all when project changes
-                          }}
-                          className={`w-full appearance-none pl-4 pr-10 py-3 rounded-2xl border-2 transition-all font-bold text-sm ${isDarkMode ? 'bg-dark-bg-surface border-slate-800 text-white focus:border-indigo-500' : 'bg-white border-slate-100 text-slate-800 focus:border-indigo-600'}`}
-                        >
-                          <option value="">Select a Project</option>
-                          {projects.map((project) => (
-                            <option key={project} value={project}>
-                              {project}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-50" />
-                      </div>
+                    <div>
+                      <h2 className={`text-lg font-display font-black tracking-tight ${isDarkMode ? 'text-dark-text-primary' : 'text-text-primary'}`}>Organizational Hierarchy</h2>
                     </div>
                   </div>
+                </div>
 
-                  {!selectedProject ? (
-                    <div className="h-[500px] flex flex-col items-center justify-center text-center p-12">
-                      <div className={`w-24 h-24 rounded-full mb-6 flex items-center justify-center ${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>
-                        <Activity className="w-10 h-10 text-slate-300 animate-pulse" />
-                      </div>
-                      <h3 className={`text-lg font-bold mb-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Ready to explore</h3>
-                      <p className={`text-sm max-w-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                        Select a project from the menu above to visualize its organizational hierarchy and reporting lines.
-                      </p>
-                    </div>
-                  ) : loading ? (
-                    <div className="h-[500px] flex items-center justify-center">
-                      <div className="flex flex-col items-center gap-4">
-                        <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
-                        <span className={`text-sm font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Building Chart...</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="min-h-[600px] overflow-auto pb-20 custom-scrollbar">
+                <div className="p-4 flex gap-4">
+                  {/* Project Selection - Left Sidebar */}
+                  <div className={`w-64 p-3 rounded-xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-light-bg-secondary border-border-light'}`}>
+                    <h3 className={`font-bold mb-3 text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Projects</h3>
+                    <div className="grid grid-cols-4 gap-1.5">
                       {(() => {
-                        const projectEmployees = allEmployees.filter(emp => emp.project === selectedProject);
-                        
-                        // Structure the data: AM -> LM -> Emp
-                        const amMap = new Map<string, { am: string, lineManagers: Map<string, { lm: string, employees: Employee[] }> }>();
-                        
-                        projectEmployees.forEach(emp => {
-                          if (!emp.area_manager) return;
-                          
-                          if (!amMap.has(emp.area_manager)) {
-                             amMap.set(emp.area_manager, { am: emp.area_manager, lineManagers: new Map() });
-                          }
-                          
-                          const amData = amMap.get(emp.area_manager)!;
-                          if (emp.line_manager) {
-                            if (!amData.lineManagers.has(emp.line_manager)) {
-                              amData.lineManagers.set(emp.line_manager, { lm: emp.line_manager, employees: [] });
-                            }
-                            amData.lineManagers.get(emp.line_manager)!.employees.push(emp);
-                          } else {
-                            // Employee with only AM
-                            if (!amData.lineManagers.has('No Line Manager')) {
-                              amData.lineManagers.set('No Line Manager', { lm: 'Direct Reports', employees: [] });
-                            }
-                            amData.lineManagers.get('No Line Manager')!.employees.push(emp);
-                          }
+                        // Sort projects
+                        const sortedProjects = [...projects].sort((a, b) => {
+                          const numA = parseInt(a.split(' ')[0] || a) || 0;
+                          const numB = parseInt(b.split(' ')[0] || b) || 0;
+                          return numA - numB;
                         });
-
-                        const areaManagers = Array.from(amMap.values());
-
-                        if (areaManagers.length === 0) {
-                          return (
-                            <div className="h-64 flex flex-col items-center justify-center text-center">
-                              <AlertCircle className="w-8 h-8 text-warning-500 mb-3" />
-                              <p className={`font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>No structural data found for this project</p>
-                              <p className="text-xs text-slate-500 mt-1">Ensure Area Managers and Line Managers are assigned to employees.</p>
-                            </div>
-                          );
-                        }
-
+                        
+                        // Split into four columns for snake pattern
+                        const columnSize = Math.ceil(sortedProjects.length / 4);
+                        const firstColumn = sortedProjects.slice(0, columnSize);
+                        const secondColumn = sortedProjects.slice(columnSize, columnSize * 2);
+                        const thirdColumn = sortedProjects.slice(columnSize * 2, columnSize * 3);
+                        const fourthColumn = sortedProjects.slice(columnSize * 3).reverse(); // Reverse for snake pattern (up again)
+                        
                         return (
-                          <div className="flex flex-col items-center py-10 w-full min-w-max">
-                            {/* Area Managers Level */}
-                            <div className="flex flex-wrap justify-center gap-16 px-10">
-                              {areaManagers.map((amGroup) => {
-                                const amId = `am-${amGroup.am}`;
-                                const isExpanded = expandedNodes.has(amId);
-                                
+                          <>
+                            {/* First Column: top to bottom */}
+                            <div className="space-y-1">
+                              {firstColumn.map((project) => {
+                                const projectCode = project.split(/[\s-]/)[0] || project;
                                 return (
-                                  <div key={amId} className="flex flex-col items-center relative">
-                                    {/* Main Node */}
-                                    <motion.div
-                                      whileHover={{ scale: 1.05 }}
-                                      onClick={() => {
-                                        const newExpanded = new Set(expandedNodes);
-                                        if (isExpanded) newExpanded.delete(amId);
-                                        else newExpanded.add(amId);
-                                        setExpandedNodes(newExpanded);
-                                      }}
-                                      className={`group relative z-10 w-32 h-32 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all border-4 shadow-xl ${isExpanded ? 'border-indigo-500 ring-4 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-800'} ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}
-                                    >
-                                      <div className={`w-14 h-14 rounded-full mb-1 flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/30' : 'bg-indigo-50'}`}>
-                                        <ShieldCheck className={`w-7 h-7 ${isExpanded ? 'text-indigo-400' : 'text-indigo-500'}`} />
-                                      </div>
-                                      <span className={`text-[10px] font-black uppercase text-center px-4 leading-tight truncate w-full ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
-                                        {amGroup.am}
-                                      </span>
-                                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">Area Manager</span>
-                                      
-                                      <div className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full flex items-center justify-center shadow-sm border transition-transform ${isExpanded ? 'rotate-180 bg-indigo-500 border-indigo-600' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
-                                        <ChevronDown className={`w-3 h-3 ${isExpanded ? 'text-white' : 'text-slate-400'}`} />
-                                      </div>
-                                    </motion.div>
-
-                                    {/* Connection Line */}
-                                    {isExpanded && (
-                                       <div className="w-0.5 h-12 bg-gradient-to-bottom from-indigo-500 to-emerald-400 opacity-40"></div>
-                                    )}
-
-                                    {/* Line Managers Level */}
-                                    <AnimatePresence>
-                                      {isExpanded && (
-                                        <motion.div
-                                          initial={{ opacity: 0, y: -20 }}
-                                          animate={{ opacity: 1, y: 0 }}
-                                          exit={{ opacity: 0, y: -20 }}
-                                          className="flex flex-wrap justify-center gap-12 pt-4 px-4"
-                                        >
-                                          {Array.from(amGroup.lineManagers.values()).map((lmGroup) => {
-                                            const lmId = `lm-${amGroup.am}-${lmGroup.lm}`;
-                                            const isLMExpanded = expandedNodes.has(lmId);
-
-                                            return (
-                                              <div key={lmId} className="flex flex-col items-center relative">
-                                                <motion.div
-                                                  whileHover={{ scale: 1.05 }}
-                                                  onClick={() => {
-                                                    const newExpanded = new Set(expandedNodes);
-                                                    if (isLMExpanded) newExpanded.delete(lmId);
-                                                    else newExpanded.add(lmId);
-                                                    setExpandedNodes(newExpanded);
-                                                  }}
-                                                  className={`z-10 w-24 h-24 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all border-2 shadow-md ${isLMExpanded ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-slate-200 dark:border-slate-800'} ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}
-                                                >
-                                                  <div className={`w-10 h-10 rounded-full mb-1 flex items-center justify-center ${isDarkMode ? 'bg-emerald-900/30' : 'bg-emerald-50'}`}>
-                                                    <User className={`w-5 h-5 ${isLMExpanded ? 'text-emerald-400' : 'text-emerald-500'}`} />
-                                                  </div>
-                                                  <span className={`text-[8px] font-black uppercase text-center px-1 leading-tight truncate w-full ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
-                                                    {lmGroup.lm}
-                                                  </span>
-                                                  
-                                                  <div className={`absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full flex items-center justify-center shadow-sm border transition-transform ${isLMExpanded ? 'rotate-180 bg-emerald-500 border-emerald-600' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
-                                                    <ChevronDown className={`w-2 h-2 ${isLMExpanded ? 'text-white' : 'text-slate-400'}`} />
-                                                  </div>
-                                                </motion.div>
-
-                                                {/* Connection Line */}
-                                                {isLMExpanded && (
-                                                  <div className="w-px h-10 bg-slate-200 dark:bg-slate-800 mt-2"></div>
-                                                )}
-
-                                                {/* Employees Level */}
-                                                <AnimatePresence>
-                                                  {isLMExpanded && (
-                                                    <motion.div
-                                                      initial={{ opacity: 0, scale: 0.8 }}
-                                                      animate={{ opacity: 1, scale: 1 }}
-                                                      className="grid grid-cols-2 lg:grid-cols-3 gap-3 pt-6"
-                                                    >
-                                                      {lmGroup.employees.map((emp) => (
-                                                        <motion.div
-                                                          key={emp.id}
-                                                          whileHover={{ y: -2 }}
-                                                          onClick={() => {
-                                                            setSelectedEmployee(emp);
-                                                            setShowDetailModal(true);
-                                                          }}
-                                                          className={`group w-24 p-2 rounded-2xl border flex flex-col items-center text-center cursor-pointer transition-all hover:shadow-lg ${isDarkMode ? 'bg-dark-bg-tertiary border-slate-800 hover:border-indigo-500' : 'bg-slate-50 border-slate-100 hover:border-indigo-600'}`}
-                                                        >
-                                                          <div className={`w-10 h-10 rounded-full mb-2 flex items-center justify-center overflow-hidden border-2 border-white dark:border-slate-700 shadow-sm ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}>
-                                                            {emp.gender === 'Female' ? (
-                                                              <User className="w-5 h-5 text-rose-400" />
-                                                            ) : (
-                                                              <User className="w-5 h-5 text-blue-400" />
-                                                            )}
-                                                          </div>
-                                                          <h4 className={`text-[8px] font-bold truncate w-full ${isDarkMode ? 'text-white' : 'text-slate-700'}`}>
-                                                            {emp.employee_name}
-                                                          </h4>
-                                                          <p className="text-[6px] font-medium text-slate-400 uppercase tracking-tighter mt-0.5 truncate w-full">
-                                                            {emp.designation || 'HSE Staff'}
-                                                          </p>
-                                                        </motion.div>
-                                                      ))}
-                                                    </motion.div>
-                                                  )}
-                                                </AnimatePresence>
-                                              </div>
-                                            );
-                                          })}
-                                        </motion.div>
-                                      )}
-                                    </AnimatePresence>
-                                  </div>
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedProject === project}
+                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span className="font-medium">{projectCode}</span>
+                                  </label>
                                 );
                               })}
                             </div>
-                          </div>
+                            
+                            {/* Second Column: top to bottom */}
+                            <div className="space-y-1">
+                              {secondColumn.map((project) => {
+                                const projectCode = project.split(/[\s-]/)[0] || project;
+                                return (
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedProject === project}
+                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span className="font-medium">{projectCode}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            
+                            {/* Third Column: top to bottom */}
+                            <div className="space-y-1">
+                              {thirdColumn.map((project) => {
+                                const projectCode = project.split(/[\s-]/)[0] || project;
+                                return (
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedProject === project}
+                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span className="font-medium">{projectCode}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            
+                            {/* Fourth Column: bottom to top (snake pattern) */}
+                            <div className="space-y-1">
+                              {fourthColumn.map((project) => {
+                                const projectCode = project.split(/[\s-]/)[0] || project;
+                                return (
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedProject === project}
+                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span className="font-medium">{projectCode}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </>
                         );
                       })()}
                     </div>
-                  )}
-                  
-                  <div className={`mt-12 p-6 rounded-3xl border-2 border-dashed flex items-center justify-between gap-6 ${isDarkMode ? 'bg-dark-bg-tertiary/10 border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
-                    <div className="flex items-center gap-4">
-                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isDarkMode ? 'bg-indigo-900/30' : 'bg-indigo-50'}`}>
-                         <Activity className="w-5 h-5 text-indigo-500" />
-                       </div>
-                       <div>
-                         <p className={`text-xs font-bold leading-tight ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>Data Reliability Matrix</p>
-                         <p className="text-[10px] text-slate-400 font-medium">Auto-synced from latest management site logs</p>
-                       </div>
-                    </div>
-                    <div className="flex items-center gap-6">
-                      <div className="flex flex-col items-center">
-                        <span className="text-xs font-black text-indigo-500">100%</span>
-                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Connectivity</span>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <span className="text-xs font-black text-emerald-500">Realtime</span>
-                        <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Hierarchy</span>
-                      </div>
-                    </div>
                   </div>
+
+                  {/* Hierarchy Visualization */}
+                  <div className={`flex-1 p-4 rounded-xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-light-bg-secondary border-border-light'}`}>
+                    
+                    {selectedProject ? (() => {
+                      const projectEmployees = allEmployees.filter(emp => emp.project === selectedProject);
+                      const areaManagers = [...new Set(projectEmployees.map(emp => emp.area_manager).filter(Boolean))].sort();
+                      
+                      if (areaManagers.length === 0) {
+                        return (
+                          <div className="text-center py-10">
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
+                              <ShieldOff className="w-8 h-8" />
+                            </div>
+                            <p className="font-medium">No organizational data for this project</p>
+                          </div>
+                        );
+                      }
+                      
+                      return (
+                        <div className="overflow-x-auto pb-10">
+                          <div className="min-w-max flex flex-col items-center">
+                            
+                            {/* HSSE Manager - Root */}
+                            <div className="flex flex-col items-center relative">
+                              <div 
+                                className={`w-48 p-4 rounded-2xl border-2 border-green-500 bg-gradient-to-br from-green-500/20 to-green-500/5 ${isDarkMode ? 'text-green-300 shadow-lg shadow-green-500/30' : 'text-green-700 shadow-lg shadow-green-500/20'} cursor-pointer hover:scale-105 transition-all duration-300 z-20`}
+                                onClick={() => {
+                                  const newExpanded = new Set(expandedNodes);
+                                  if (newExpanded.has('hsse-manager')) {
+                                    newExpanded.delete('hsse-manager');
+                                  } else {
+                                    newExpanded.add('hsse-manager');
+                                  }
+                                  setExpandedNodes(newExpanded);
+                                }}
+                              >
+                                <div className="flex flex-col items-center text-center">
+                                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-3 text-white font-bold text-lg bg-gradient-to-br from-green-500 to-green-600 ring-4 ring-green-500/20 shadow-inner`}>
+                                    {getInitials("Ahmed Mohamed Abbas Ahmed")}
+                                  </div>
+                                  <h4 className="font-bold text-sm mb-1 leading-tight">Ahmed Mohamed Abbas Ahmed</h4>
+                                  <p className="text-[10px] uppercase tracking-wider opacity-70 font-bold mb-1">HSSE Manager</p>
+                                  <p className="text-[10px] opacity-60">Trojan HQ</p>
+                                </div>
+                              </div>
+                              
+                              {expandedNodes.has('hsse-manager') && (
+                                <>
+                                  {/* Root vertical drop */}
+                                  <div className="w-0.5 h-12 bg-gradient-to-b from-green-500 to-indigo-500/50 z-10"></div>
+                                  
+                                  {/* Area Managers Container */}
+                                  <div className="relative w-full flex justify-center gap-16 px-8">
+                                    {/* Direct Diagonal Lines from Center of Root to Centers of Area Managers */}
+                                    <svg className="absolute top-[-1px] left-0 w-full h-12 pointer-events-none overflow-visible">
+                                      <defs>
+                                        <linearGradient id="line-grad-hsse-am" x1="0%" y1="0%" x2="0%" y2="100%">
+                                          <stop offset="0%" stopColor="#22c55e" />
+                                          <stop offset="100%" stopColor="#6366f1" stopOpacity="0.4" />
+                                        </linearGradient>
+                                      </defs>
+                                      {areaManagers.map((_, idx) => {
+                                        const total = areaManagers.length;
+                                        const targetX = `${((idx + 0.5) / total) * 100}%`;
+                                        return (
+                                          <line key={idx} x1="50%" y1="0" x2={targetX} y2="48" stroke="url(#line-grad-hsse-am)" strokeWidth="2.5" strokeDasharray="4 2" />
+                                        );
+                                      })}
+                                    </svg>
+                                    
+                                    {areaManagers.map((areaManager) => {
+                                      const amNodeId = `am-${areaManager}`;
+                                      const projectEmps = projectEmployees.filter(emp => emp.area_manager === areaManager);
+                                      const lineManagers = [...new Set(projectEmps.map(emp => emp.line_manager).filter(Boolean))].sort();
+                                      
+                                      return (
+                                        <div key={areaManager} className="flex flex-col items-center flex-1">
+                                          {/* Area Manager Box */}
+                                          <div 
+                                            className={`w-44 p-3 rounded-2xl border-2 border-indigo-500 bg-gradient-to-br from-indigo-500/15 to-indigo-500/5 ${isDarkMode ? 'text-indigo-300 shadow-md shadow-indigo-500/20' : 'text-indigo-700 shadow-md shadow-indigo-500/10'} cursor-pointer hover:scale-105 transition-all duration-300 z-20`}
+                                            onClick={() => {
+                                              const newExpanded = new Set(expandedNodes);
+                                              if (newExpanded.has(amNodeId)) {
+                                                newExpanded.delete(amNodeId);
+                                              } else {
+                                                newExpanded.add(amNodeId);
+                                              }
+                                              setExpandedNodes(newExpanded);
+                                            }}
+                                            onDoubleClick={() => setEditingNode({ type: 'am', name: String(areaManager) })}
+                                          >
+                                            <div className="flex flex-col items-center text-center">
+                                              <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 text-white font-bold shadow-md bg-gradient-to-br ${getAvatarColor(String(areaManager))}`}>
+                                                {getInitials(String(areaManager))}
+                                              </div>
+                                              {editingNode?.type === 'am' && editingNode.name === areaManager ? (
+                                                <input
+                                                  autoFocus
+                                                  defaultValue={String(areaManager)}
+                                                  onBlur={(e) => handleNodeEdit(e.target.value, 'am', String(areaManager))}
+                                                  className={`w-full text-xs font-bold text-center bg-transparent border-b-2 border-indigo-500 outline-none mb-1 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
+                                                />
+                                              ) : (
+                                                <h4 className="font-bold text-xs truncate w-full mb-0.5">{areaManager}</h4>
+                                              )}
+                                              <p className="text-[9px] uppercase tracking-wide opacity-70 font-bold">Area Manager</p>
+                                            </div>
+                                          </div>
+                                          
+                                          {expandedNodes.has(amNodeId) && (
+                                            <>
+                                              {/* AM vertical drop */}
+                                              <div className="w-0.5 h-10 bg-gradient-to-b from-indigo-500 to-emerald-500/50 z-10"></div>
+                                              
+                                              {/* Line Managers Container */}
+                                              <div className="relative w-full flex justify-center gap-8 px-4">
+                                                {/* Direct Diagonal Lines from AM to Line Managers */}
+                                                <svg className="absolute top-[-1px] left-0 w-full h-10 pointer-events-none overflow-visible">
+                                                  {lineManagers.map((_, idx) => {
+                                                    const total = lineManagers.length;
+                                                    const targetX = `${((idx + 0.5) / total) * 100}%`;
+                                                    return (
+                                                      <line key={idx} x1="50%" y1="0" x2={targetX} y2="40" stroke="#10b981" strokeWidth="2" opacity="0.3" strokeDasharray="2 1" />
+                                                    );
+                                                  })}
+                                                </svg>
+                                                
+                                                {lineManagers.map((lineManager) => {
+                                                  const lmNodeId = `lm-${areaManager}-${lineManager}`;
+                                                  const lmEmployees = projectEmps.filter(emp => emp.line_manager === lineManager);
+                                                  
+                                                  return (
+                                                    <div key={lineManager} className="flex flex-col items-center flex-1">
+                                                      {/* Line Manager Box */}
+                                                      <div
+                                                        className={`w-36 p-3 rounded-2xl border-2 border-emerald-500 bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 ${isDarkMode ? 'text-emerald-300 shadow-md shadow-emerald-500/20' : 'text-emerald-700 shadow-md shadow-emerald-500/10'} cursor-pointer hover:scale-105 transition-all duration-300 z-20 ${draggedEmployee ? 'ring-2 ring-dashed ring-emerald-400' : ''}`}
+                                                        onClick={() => {
+                                                          const newExpanded = new Set(expandedNodes);
+                                                          if (newExpanded.has(lmNodeId)) {
+                                                            newExpanded.delete(lmNodeId);
+                                                          } else {
+                                                            newExpanded.add(lmNodeId);
+                                                          }
+                                                          setExpandedNodes(newExpanded);
+                                                        }}
+                                                        onDragOver={(e) => e.preventDefault()}
+                                                        onDrop={async (e) => {
+                                                          e.preventDefault();
+                                                          if (draggedEmployee) {
+                                                            try {
+                                                              const docRef = doc(db, 'hse_employees', String(draggedEmployee.employee_no));
+                                                              await updateDoc(docRef, { line_manager: lineManager, area_manager: areaManager });
+                                                              setAllEmployees(prev => prev.map(emp => emp.employee_no === draggedEmployee.employee_no ? { ...emp, line_manager: lineManager, area_manager: areaManager } : emp));
+                                                              setDraggedEmployee(null);
+                                                            } catch (error) {
+                                                              console.error('Error updating employee:', error);
+                                                            }
+                                                          }
+                                                        }}
+                                                      >
+                                                        <div className="flex flex-col items-center text-center">
+                                                          <div className={`w-11 h-11 rounded-full flex items-center justify-center mb-2 text-white font-bold text-xs shadow-sm bg-gradient-to-br ${getAvatarColor(String(lineManager))}`}>
+                                                            {getInitials(String(lineManager))}
+                                                          </div>
+                                                          <h4 className="font-bold text-[10px] truncate w-full mb-0.5">{lineManager}</h4>
+                                                          <p className="text-[8px] uppercase tracking-wide opacity-70 font-bold">Line Manager</p>
+                                                          <div className={`mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold ${isDarkMode ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600'}`}>
+                                                            {lmEmployees.length} Emp
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                      
+                                                      {expandedNodes.has(lmNodeId) && (
+                                                        <>
+                                                          {/* LM vertical drop */}
+                                                          <div className="w-0.5 h-6 bg-gradient-to-b from-emerald-500 to-slate-400/30 z-10"></div>
+                                                          
+                                                          {/* Employees List */}
+                                                          <div className="flex flex-col gap-1.5 w-full max-w-[150px]">
+                                                            {lmEmployees.map(employee => (
+                                                              <div
+                                                                key={employee.employee_no}
+                                                                draggable
+                                                                onClick={() => setAssignmentModal({ isOpen: true, employee })}
+                                                                onDragStart={() => setDraggedEmployee(employee)}
+                                                                onDragEnd={() => setDraggedEmployee(null)}
+                                                                className={`p-2 rounded-xl border border-dashed ${isDarkMode ? 'border-slate-700 bg-slate-800/50 hover:bg-slate-800' : 'border-slate-200 bg-white hover:bg-slate-50'} cursor-pointer transition-all flex items-center gap-2 group relative ${draggedEmployee?.employee_no === employee.employee_no ? 'opacity-50 grayscale' : ''}`}
+                                                              >
+                                                                <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold text-[9px] ${getAvatarColor(String(employee.employee_name))}`}>
+                                                                  {getInitials(String(employee.employee_name))}
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                  <h4 className="font-bold text-[9px] truncate tracking-tight">{employee.employee_name}</h4>
+                                                                  <p className="text-[7px] opacity-60 truncate uppercase font-bold">{employee.designation || 'HSE'}</p>
+                                                                </div>
+                                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                  <Settings className="w-3 h-3 text-indigo-500" />
+                                                                </div>
+                                                              </div>
+                                                            ))}
+                                                          </div>
+                                                        </>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })() : (
+                      <div className="text-center py-20 pointer-events-none">
+                        <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${isDarkMode ? 'bg-indigo-900/40 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                          <ShieldCheck className="w-10 h-10" />
+                        </div>
+                        <h3 className={`text-xl font-bold mb-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Project Hierarchy</h3>
+                        <p className={`text-sm max-w-xs mx-auto ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                          Select a project above to visualize the organizational management structure
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                    {/* Assignment Modal */}
+                   <AnimatePresence>
+                     {assignmentModal.isOpen && assignmentModal.employee && (
+                       <div key="assignment-modal" className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                         <motion.div 
+                           initial={{ scale: 0.95, opacity: 0 }}
+                           animate={{ scale: 1, opacity: 1 }}
+                           exit={{ scale: 0.95, opacity: 0 }}
+                           className={`w-full max-w-md p-6 rounded-2xl shadow-2xl ${isDarkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white'}`}
+                         >
+                           <div className="flex justify-between items-center mb-6">
+                             <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Edit Assignment</h3>
+                             <button onClick={() => setAssignmentModal({ isOpen: false, employee: null })} className="p-1 rounded-full hover:bg-slate-100 transition-colors">
+                               <X className="w-5 h-5 text-slate-500" />
+                             </button>
+                           </div>
+                           
+                           <div className="space-y-4">
+                             <div>
+                               <label className="block text-xs font-bold uppercase mb-2 opacity-70">
+                                 Project
+                               </label>
+                               <select
+                                 value={assignmentModal.employee.project || ''}
+                                 onChange={(e) => {
+                                   if (assignmentModal.employee) {
+                                     setAssignmentModal({
+                                       ...assignmentModal,
+                                       employee: { ...assignmentModal.employee, project: e.target.value }
+                                     });
+                                   }
+                                 }}
+                                 className={`w-full p-3 rounded-lg border ${isDarkMode ? 'bg-dark-bg-surface border-border-dark text-white' : 'bg-white border-border-light text-slate-800'}`}
+                               >
+                                 <option value="">Select Project</option>
+                                 {projects.map(project => (
+                                   <option key={project} value={project}>{project}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             
+                             <div>
+                               <label className="block text-xs font-bold uppercase mb-2 opacity-70">
+                                 Area Manager
+                               </label>
+                               <select
+                                 value={assignmentModal.employee.area_manager || ''}
+                                 onChange={(e) => {
+                                   if (assignmentModal.employee) {
+                                     setAssignmentModal({
+                                       ...assignmentModal,
+                                       employee: { ...assignmentModal.employee, area_manager: e.target.value }
+                                     });
+                                   }
+                                 }}
+                                 className={`w-full p-3 rounded-lg border ${isDarkMode ? 'bg-dark-bg-surface border-border-dark text-white' : 'bg-white border-border-light text-slate-800'}`}
+                               >
+                                 <option value="">Select Area Manager</option>
+                                 {[...new Set(allEmployees.filter(emp => !assignmentModal.employee?.project || emp.project === assignmentModal.employee.project).map(emp => emp.area_manager).filter(Boolean))].sort().map(am => (
+                                   <option key={String(am)} value={String(am)}>{String(am)}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             
+                             <div>
+                               <label className="block text-xs font-bold uppercase mb-2 opacity-70">
+                                 Line Manager
+                               </label>
+                               <select
+                                 value={assignmentModal.employee.line_manager || ''}
+                                 onChange={(e) => {
+                                   if (assignmentModal.employee) {
+                                     setAssignmentModal({
+                                       ...assignmentModal,
+                                       employee: { ...assignmentModal.employee, line_manager: e.target.value }
+                                     });
+                                   }
+                                 }}
+                                 className={`w-full p-3 rounded-lg border ${isDarkMode ? 'bg-dark-bg-surface border-border-dark text-white' : 'bg-white border-border-light text-slate-800'}`}
+                               >
+                                 <option value="">Select Line Manager</option>
+                                 {[...new Set(allEmployees.filter(emp => !assignmentModal.employee?.project || emp.project === assignmentModal.employee.project).map(emp => emp.line_manager).filter(Boolean))].sort().map(lm => (
+                                   <option key={String(lm)} value={String(lm)}>{String(lm)}</option>
+                                 ))}
+                               </select>
+                             </div>
+                           </div>
+                           
+                           <div className="flex gap-3 mt-8">
+                             <button
+                               onClick={() => setAssignmentModal({ isOpen: false, employee: null })}
+                               className={`flex-1 py-2 px-4 rounded-lg font-bold text-sm ${isDarkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                             >
+                               Cancel
+                             </button>
+                             <button
+                               onClick={async () => {
+                                 if (assignmentModal.employee) {
+                                   try {
+                                     const docRef = doc(db, 'hse_employees', assignmentModal.employee.id);
+                                     await updateDoc(docRef, {
+                                       project: assignmentModal.employee.project,
+                                       area_manager: assignmentModal.employee.area_manager,
+                                       line_manager: assignmentModal.employee.line_manager
+                                     });
+                                     setAssignmentModal({ isOpen: false, employee: null });
+                                   } catch (error) {
+                                     console.error('Error updating employee:', error);
+                                   }
+                                 }
+                               }}
+                               className="flex-1 py-2 px-4 rounded-lg font-bold text-sm bg-indigo-600 text-white hover:bg-indigo-700"
+                             >
+                               Save Changes
+                             </button>
+                           </div>
+                         </motion.div>
+                       </div>
+                     )}
+                   </AnimatePresence>
                 </div>
               </div>
             </motion.div>
@@ -1832,7 +2101,6 @@ export default function App() {
                             {person.role}
                           </div>
                           <div className={`flex items-center gap-2 text-[10px] font-bold ${isDarkMode ? 'text-dark-text-muted' : 'text-text-muted'} uppercase tracking-tight mt-1`}>
-                            <Briefcase className="w-3 h-3 text-text-muted" />
                             {person.project}
                           </div>
                         </div>

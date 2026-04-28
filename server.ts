@@ -215,6 +215,32 @@ app.delete('/api/employees/:id', async (req, res) => {
   }
 });
 
+app.put('/api/employees/:employee_no', async (req, res) => {
+  try {
+    if (!db) throw new Error('DB not initialized');
+    const { employee_no } = req.params;
+    const updates = req.body;
+    
+    // Find the document ID for this employee_no
+    const q = query(collection(db, 'hse_employees'), where('employee_no', '==', employee_no));
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.empty) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+    
+    const docId = snapshot.docs[0].id;
+    await updateDoc(doc(db, 'hse_employees', docId), {
+      ...updates,
+      updatedAt: new Date().toISOString()
+    });
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/all-employees', async (req, res) => {
   try {
     if (!db) throw new Error('DB not initialized');
