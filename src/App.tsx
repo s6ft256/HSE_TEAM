@@ -10,11 +10,16 @@ import {
   Filter,
   Activity,
   Plus,
+  Save,
   Trash2,
   Edit2,
   ShieldCheck,
   User,
   X,
+  XCircle,
+  PlusCircle,
+  CheckCircle2,
+  ListTodo,
   Mail,
   Github,
   Moon,
@@ -92,6 +97,18 @@ interface Employee {
   "assigned_to": string;
   "project_code": string;
   "email": string;
+  "tasks"?: string[]; // Array of task IDs
+}
+
+interface ProjectTask {
+  id: string;
+  title: string;
+  description: string;
+  status: 'Pending' | 'In Progress' | 'Completed';
+  priority: 'Low' | 'Medium' | 'High';
+  project: string;
+  dueDate: string;
+  createdAt: string;
 }
 
 import { 
@@ -203,7 +220,23 @@ export default function App() {
     }
   }, [isAdminMode, allEmployees, stats, globalLineManagers, globalAreaManagers]);
 
-  const [selectedProject, setSelectedProject] = useState('');
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+  
+  const toggleProject = (project: string) => {
+    setSelectedProjects(prev => 
+      prev.includes(project) 
+        ? prev.filter(p => p !== project) 
+        : [...prev, project]
+    );
+  };
+
+  const toggleAllProjects = () => {
+    if (selectedProjects.length === projects.length && projects.length > 0) {
+      setSelectedProjects([]);
+    } else {
+      setSelectedProjects([...projects]);
+    }
+  };
   const [selectedLineManager, setSelectedLineManager] = useState('');
   const [selectedAreaManager, setSelectedAreaManager] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -356,7 +389,22 @@ export default function App() {
   const [importStatus, setImportStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [editingTask, setEditingTask] = useState<Partial<ProjectTask> | null>(null);
+  const [isTaskDragOver, setIsTaskDragOver] = useState<string | null>(null);
+
+  // Monitor tasks
+  useEffect(() => {
+    const path = 'hse_tasks';
+    const q = collection(db, path);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setProjectTasks(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProjectTask)));
+    }, (error) => {
+      console.error('Error loading tasks:', error);
+    });
+    return () => unsubscribe();
+  }, []);
   const [draggedEmployee, setDraggedEmployee] = useState<Employee | null>(null);
   const [editingNode, setEditingNode] = useState<{ type: 'am' | 'lm', name: string, areaManager?: string } | null>(null);
 
@@ -427,6 +475,98 @@ export default function App() {
   };
   const [assignmentModal, setAssignmentModal] = useState<{ isOpen: boolean; employee: Employee | null }>({ isOpen: false, employee: null });
 
+  const handleSaveTask = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editingTask?.title || !editingTask?.project) {
+        alert('Title and Project are required');
+        return;
+    }
+    setFormLoading(true);
+
+    try {
+      const taskId = editingTask.id || `task_${Date.now()}`;
+      const docRef = doc(db, 'hse_tasks', taskId);
+      
+      const payload = {
+        ...editingTask,
+        id: taskId,
+        status: editingTask.status || 'Pending',
+        priority: editingTask.priority || 'Medium',
+        createdAt: editingTask.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await setDoc(docRef, payload, { merge: true });
+      
+      alert('Task saved successfully!');
+      setShowTaskForm(false);
+      setEditingTask(null);
+    } catch (err: any) {
+      console.error('Save task error:', err);
+      alert('Failed to save task: ' + err.message);
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (!window.confirm('Are you sure you want to delete this task?')) return;
+    try {
+      await deleteDoc(doc(db, 'hse_tasks', taskId));
+      
+      // Also remove this task from all employees
+      const batch = writeBatch(db);
+      allEmployees.forEach(emp => {
+        if (emp.tasks?.includes(taskId)) {
+          const empRef = doc(db, 'hse_employees', String(emp.employee_no));
+          batch.update(empRef, {
+            tasks: emp.tasks.filter(id => id !== taskId)
+          });
+        }
+      });
+      await batch.commit();
+      
+      alert('Task deleted.');
+    } catch (err: any) {
+      console.error('Delete task error:', err);
+      alert('Delete failed.');
+    }
+  };
+
+  const handleAssignTask = async (employeeNo: string, taskId: string) => {
+    try {
+      const employee = allEmployees.find(emp => String(emp.employee_no) === String(employeeNo));
+      if (!employee) return;
+
+      const currentTasks = employee.tasks || [];
+      if (currentTasks.includes(taskId)) return;
+
+      const empRef = doc(db, 'hse_employees', String(employeeNo));
+      await updateDoc(empRef, {
+        tasks: [...currentTasks, taskId]
+      });
+    } catch (err) {
+      console.error('Error assigning task:', err);
+    }
+  };
+
+  const handleUnassignTask = async (employeeNo: string, taskId: string) => {
+    try {
+      const employee = allEmployees.find(emp => String(emp.employee_no) === String(employeeNo));
+      if (!employee) return;
+
+      const currentTasks = employee.tasks || [];
+      const updatedTasks = currentTasks.filter(id => id !== taskId);
+
+      const empRef = doc(db, 'hse_employees', String(employeeNo));
+      await updateDoc(empRef, {
+        tasks: updatedTasks
+      });
+    } catch (err) {
+      console.error('Error unassigning task:', err);
+    }
+  };
+
   const loadData = async () => {
     setRefreshing(true);
     try {
@@ -467,9 +607,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedProject) {
+    if (selectedProjects.length > 0) {
       setLoading(true);
-      fetch(`/api/line-managers?project=${encodeURIComponent(selectedProject)}`)
+      // For now, use the first selected project for the line manager fetch
+      // if the backend logic only supports one.
+      fetch(`/api/line-managers?project=${encodeURIComponent(selectedProjects[0])}`)
         .then(res => res.json())
         .then(data => {
           if (data && data.error) {
@@ -489,7 +631,7 @@ export default function App() {
         })
         .catch(err => setError('Failed to fetch line managers.'));
     }
-  }, [selectedProject]);
+  }, [selectedProjects]);
 
   useEffect(() => {
     if (selectedLineManager) {
@@ -1024,7 +1166,7 @@ export default function App() {
   // Reset pagination when filters or search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedProject, selectedLineManager, selectedAreaManager, searchTerm]);
+  }, [selectedProjects, selectedLineManager, selectedAreaManager, searchTerm]);
 
   // Calculate department statistics
   const departmentStats = filteredEmployees.reduce((acc, emp) => {
@@ -1106,8 +1248,8 @@ export default function App() {
                     Project
                   </label>
                   <select 
-                    value={selectedProject}
-                    onChange={(e) => setSelectedProject(e.target.value)}
+                    value={selectedProjects[0] || ''}
+                    onChange={(e) => setSelectedProjects(e.target.value ? [e.target.value] : [])}
                     className="w-full filter-select"
                   >
                     <option value="">Select Project</option>
@@ -1124,11 +1266,11 @@ export default function App() {
                   </label>
                   <select 
                     value={selectedLineManager}
-                    disabled={!selectedProject}
+                    disabled={selectedProjects.length === 0}
                     onChange={(e) => setSelectedLineManager(e.target.value)}
                     className="w-full filter-select disabled:opacity-50"
                   >
-                    <option value="">{selectedProject ? 'Select Line Manager' : 'Select Project First'}</option>
+                    <option value="">{selectedProjects.length > 0 ? 'Select Line Manager' : 'Select Project First'}</option>
                     {lineManagers.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
@@ -1157,7 +1299,7 @@ export default function App() {
               </section>
 
         {/* Hierarchy Selection - Shows when Project is selected */}
-        {selectedProject && (
+        {selectedProjects.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Line Manager Selection */}
             {lineManagers.length > 0 && (
@@ -1172,7 +1314,7 @@ export default function App() {
                     <Users className="w-4 h-4 text-primary-500" />
                   </div>
                   <h3 className={`text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-dark-text-secondary' : 'text-text-secondary'}`}>
-                    Line Managers <span className="text-primary-500 font-normal opacity-60">• {selectedProject}</span>
+                    Line Managers <span className="text-primary-500 font-normal opacity-60">• {selectedProjects.length === 1 ? selectedProjects[0] : `${selectedProjects.length} Projects`}</span>
                   </h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1389,7 +1531,9 @@ export default function App() {
                           key={emp.employee_no}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          className={`hover:bg-light-bg-secondary/80 transition-colors group ${isDarkMode ? 'hover:bg-dark-bg-tertiary/80' : ''}`}
+                          draggable
+                          onDragStart={() => setDraggedEmployee(emp)}
+                          className={`hover:bg-light-bg-secondary/80 transition-colors cursor-grab active:cursor-grabbing group ${isDarkMode ? 'hover:bg-dark-bg-tertiary/80' : ''}`}
                         >
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
@@ -1583,6 +1727,111 @@ export default function App() {
               </motion.div>
             )}
 
+            {/* Project Task Board Card - Interactive Drop Zone */}
+            {selectedProjects.length === 1 && (
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className={`bento-card flex flex-col h-[400px] overflow-hidden ${isDarkMode ? 'bg-dark-bg-elevated' : 'bg-light-bg-elevated border-primary-100 shadow-xl shadow-primary-500/5'}`}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${isDarkMode ? 'bg-primary-900/50' : 'bg-primary-50'}`}>
+                      <ListTodo className="w-4 h-4 text-primary-600" />
+                    </div>
+                    <div>
+                      <h3 className={`text-[11px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Project Task Board</h3>
+                      <p className={`text-[9px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{selectedProjects[0]}</p>
+                    </div>
+                  </div>
+                  <div className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                    Drag Staff to Assign
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+                  {projectTasks.filter(t => t.project === selectedProjects[0]).length > 0 ? (
+                    projectTasks.filter(t => t.project === selectedProjects[0]).map(task => (
+                      <div 
+                        key={task.id}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsTaskDragOver(task.id);
+                        }}
+                        onDragLeave={() => setIsTaskDragOver(null)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsTaskDragOver(null);
+                          if (draggedEmployee) {
+                            handleAssignTask(String(draggedEmployee.employee_no), task.id);
+                            setDraggedEmployee(null);
+                          }
+                        }}
+                        className={`p-4 rounded-2xl border-2 transition-all relative ${
+                          isTaskDragOver === task.id 
+                            ? 'border-primary-500 bg-primary-50/20 scale-[1.02]' 
+                            : isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-100 shadow-sm'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                           <h4 className={`text-xs font-bold truncate pr-6 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{task.title}</h4>
+                           <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                              task.priority === 'High' ? 'bg-accent-100 text-accent-700' : 
+                              task.priority === 'Medium' ? 'bg-warning-100 text-warning-700' : 'bg-success-100 text-success-700'
+                            }`}>
+                              {task.priority}
+                            </span>
+                        </div>
+                        
+                        <div className="flex items-center gap-1.5 mb-3">
+                           <div className={`w-1.5 h-1.5 rounded-full ${
+                              task.status === 'Completed' ? 'bg-success-500' : 
+                              task.status === 'In Progress' ? 'bg-primary-500' : 'bg-slate-300'
+                            }`} />
+                           <span className={`text-[9px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{task.status}</span>
+                        </div>
+
+                        {/* Assigned Employees Avatars */}
+                        <div className="flex -space-x-2 overflow-hidden">
+                           {allEmployees.filter(emp => emp.tasks?.includes(task.id)).slice(0, 5).map(emp => (
+                             <div 
+                               key={emp.employee_no}
+                               title={emp.employee_name}
+                               className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[8px] font-bold uppercase ${isDarkMode ? 'border-slate-800 bg-primary-900 text-primary-200' : 'border-white bg-primary-100 text-primary-700'}`}
+                             >
+                               {(emp.employee_name || "?").charAt(0)}
+                             </div>
+                           ))}
+                           {allEmployees.filter(emp => emp.tasks?.includes(task.id)).length > 5 && (
+                             <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-[8px] font-bold ${isDarkMode ? 'border-slate-800 bg-slate-700 text-slate-400' : 'border-white bg-slate-100 text-slate-500'}`}>
+                               +{allEmployees.filter(emp => emp.tasks?.includes(task.id)).length - 5}
+                             </div>
+                           )}
+                           {allEmployees.filter(emp => emp.tasks?.includes(task.id)).length === 0 && (
+                             <div className="text-[10px] italic text-slate-400">No staff assigned</div>
+                           )}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                        <ShieldOff className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <p className="text-xs font-medium text-slate-500">No tasks defined for this project.</p>
+                      <button 
+                        onClick={() => setActiveTab('Settings')}
+                        className="text-xs text-primary-600 font-bold hover:underline"
+                      >
+                        Create tasks in Settings
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
           </div>
         </div>
       </>
@@ -1605,7 +1854,19 @@ export default function App() {
                 <div className="p-4 flex gap-4">
                   {/* Project Selection - Left Sidebar */}
                   <div className={`w-64 p-3 rounded-xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-light-bg-secondary border-border-light'}`}>
-                    <h3 className={`font-bold mb-3 text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Projects</h3>
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Projects</h3>
+                      <button 
+                        onClick={toggleAllProjects}
+                        className={`text-[10px] px-2 py-1 rounded-md font-bold transition-colors ${
+                          selectedProjects.length === projects.length && projects.length > 0
+                            ? 'bg-primary-500 text-white' 
+                            : isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                        }`}
+                      >
+                        {selectedProjects.length === projects.length && projects.length > 0 ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
                     <div className="grid grid-cols-4 gap-1.5">
                       {(() => {
                         // Sort projects
@@ -1629,11 +1890,11 @@ export default function App() {
                               {firstColumn.map((project) => {
                                 const projectCode = project.split(/[\s-]/)[0] || project;
                                 return (
-                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProjects.includes(project) ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
                                     <input
                                       type="checkbox"
-                                      checked={selectedProject === project}
-                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      checked={selectedProjects.includes(project)}
+                                      onChange={() => toggleProject(project)}
                                       className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                     />
                                     <span className="font-medium">{projectCode}</span>
@@ -1647,11 +1908,11 @@ export default function App() {
                               {secondColumn.map((project) => {
                                 const projectCode = project.split(/[\s-]/)[0] || project;
                                 return (
-                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProjects.includes(project) ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
                                     <input
                                       type="checkbox"
-                                      checked={selectedProject === project}
-                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      checked={selectedProjects.includes(project)}
+                                      onChange={() => toggleProject(project)}
                                       className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                     />
                                     <span className="font-medium">{projectCode}</span>
@@ -1665,11 +1926,11 @@ export default function App() {
                               {thirdColumn.map((project) => {
                                 const projectCode = project.split(/[\s-]/)[0] || project;
                                 return (
-                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProjects.includes(project) ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
                                     <input
                                       type="checkbox"
-                                      checked={selectedProject === project}
-                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      checked={selectedProjects.includes(project)}
+                                      onChange={() => toggleProject(project)}
                                       className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                     />
                                     <span className="font-medium">{projectCode}</span>
@@ -1683,11 +1944,11 @@ export default function App() {
                               {fourthColumn.map((project) => {
                                 const projectCode = project.split(/[\s-]/)[0] || project;
                                 return (
-                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProject === project ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
+                                  <label key={project} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-all text-xs ${selectedProjects.includes(project) ? (isDarkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white') : (isDarkMode ? 'hover:bg-dark-bg-surface text-dark-text-primary' : 'hover:bg-slate-100 text-text-primary')}`}>
                                     <input
                                       type="checkbox"
-                                      checked={selectedProject === project}
-                                      onChange={() => setSelectedProject(selectedProject === project ? '' : project)}
+                                      checked={selectedProjects.includes(project)}
+                                      onChange={() => toggleProject(project)}
                                       className="w-3 h-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                     />
                                     <span className="font-medium">{projectCode}</span>
@@ -1704,218 +1965,192 @@ export default function App() {
                   {/* Hierarchy Visualization */}
                   <div className={`flex-1 p-4 rounded-xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-light-bg-secondary border-border-light'}`}>
                     
-                    {selectedProject ? (() => {
-                      const projectEmployees = allEmployees.filter(emp => emp.project === selectedProject);
+                    {selectedProjects.length > 0 ? (() => {
+                      const projectEmployees = allEmployees.filter(emp => selectedProjects.includes(emp.project));
                       const areaManagers = [...new Set(projectEmployees.map(emp => emp.area_manager).filter(Boolean))].sort();
                       
+                      // Dynamic scaling based on structure width
+                      const isCompact = selectedProjects.length > 1 || areaManagers.length > 3;
+                      const allSelected = selectedProjects.length === projects.length;
+                      
+                      let scaleFactor = "scale-100";
+                      if (areaManagers.length > 6 || (allSelected && areaManagers.length > 4)) {
+                        scaleFactor = "scale-50";
+                      } else if (areaManagers.length > 4 || (allSelected && areaManagers.length > 2)) {
+                        scaleFactor = "scale-75";
+                      } else if (isCompact) {
+                        scaleFactor = "scale-90";
+                      }
+
                       if (areaManagers.length === 0) {
                         return (
                           <div className="text-center py-10">
                             <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
                               <ShieldOff className="w-8 h-8" />
                             </div>
-                            <p className="font-medium">No organizational data for this project</p>
+                            <p className="font-medium">No organizational data for selected projects</p>
                           </div>
                         );
                       }
                       
                       return (
-                        <div className="overflow-x-auto pb-10">
-                          <div className="min-w-max flex flex-col items-center">
-                            
+                        <div className="overflow-x-auto pb-10 scrollbar-hide">
+                          <div className={`min-w-max flex flex-col items-center transition-all duration-700 ${scaleFactor} origin-top py-8`}>
                             {/* HSSE Manager - Root */}
                             <div className="flex flex-col items-center relative">
                               <div 
-                                className={`w-48 p-4 rounded-2xl border-2 border-green-500 bg-gradient-to-br from-green-500/20 to-green-500/5 ${isDarkMode ? 'text-green-300 shadow-lg shadow-green-500/30' : 'text-green-700 shadow-lg shadow-green-500/20'} cursor-pointer hover:scale-105 transition-all duration-300 z-20`}
-                                onClick={() => {
-                                  const newExpanded = new Set(expandedNodes);
-                                  if (newExpanded.has('hsse-manager')) {
-                                    newExpanded.delete('hsse-manager');
-                                  } else {
-                                    newExpanded.add('hsse-manager');
-                                  }
-                                  setExpandedNodes(newExpanded);
-                                }}
+                                className={`${isCompact ? 'w-40 p-3' : 'w-48 p-4'} rounded-2xl border-2 border-green-500 bg-gradient-to-br from-green-500/20 to-green-500/5 ${isDarkMode ? 'text-green-300 shadow-lg shadow-green-500/30' : 'text-green-700 shadow-lg shadow-green-500/20'} cursor-default transition-all duration-300 z-20`}
                               >
                                 <div className="flex flex-col items-center text-center">
-                                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-3 text-white font-bold text-lg bg-gradient-to-br from-green-500 to-green-600 ring-4 ring-green-500/20 shadow-inner`}>
+                                  <div className={`${isCompact ? 'w-12 h-12' : 'w-16 h-16'} rounded-full flex items-center justify-center mb-2 text-white font-bold ${isCompact ? 'text-sm' : 'text-lg'} bg-gradient-to-br from-green-500 to-green-600 ring-4 ring-green-500/20 shadow-inner`}>
                                     {getInitials("Ahmed Mohamed Abbas Ahmed")}
                                   </div>
-                                  <h4 className="font-bold text-sm mb-1 leading-tight">Ahmed Mohamed Abbas Ahmed</h4>
-                                  <p className="text-[10px] uppercase tracking-wider opacity-70 font-bold mb-1">HSSE Manager</p>
-                                  <p className="text-[10px] opacity-60">Trojan HQ</p>
+                                  <h4 className={`font-bold ${isCompact ? 'text-xs' : 'text-sm'} mb-1 leading-tight`}>Ahmed Mohamed Abbas Ahmed</h4>
+                                  <p className="text-[9px] uppercase tracking-wider opacity-70 font-bold mb-1">HSSE Manager</p>
+                                  <p className="text-[9px] opacity-60">Trojan HQ</p>
                                 </div>
                               </div>
                               
-                              {expandedNodes.has('hsse-manager') && (
-                                <>
-                                  {/* Root vertical drop */}
-                                  <div className="w-0.5 h-12 bg-gradient-to-b from-green-500 to-indigo-500/50 z-10"></div>
-                                  
-                                  {/* Area Managers Container */}
-                                  <div className="relative w-full flex justify-center gap-16 px-8">
-                                    {/* Direct Diagonal Lines from Center of Root to Centers of Area Managers */}
-                                    <svg className="absolute top-[-1px] left-0 w-full h-12 pointer-events-none overflow-visible">
-                                      <defs>
-                                        <linearGradient id="line-grad-hsse-am" x1="0%" y1="0%" x2="0%" y2="100%">
-                                          <stop offset="0%" stopColor="#22c55e" />
-                                          <stop offset="100%" stopColor="#6366f1" stopOpacity="0.4" />
-                                        </linearGradient>
-                                      </defs>
-                                      {areaManagers.map((_, idx) => {
-                                        const total = areaManagers.length;
-                                        const targetX = `${((idx + 0.5) / total) * 100}%`;
-                                        return (
-                                          <line key={idx} x1="50%" y1="0" x2={targetX} y2="48" stroke="url(#line-grad-hsse-am)" strokeWidth="2.5" strokeDasharray="4 2" />
-                                        );
-                                      })}
-                                    </svg>
-                                    
-                                    {areaManagers.map((areaManager) => {
-                                      const amNodeId = `am-${areaManager}`;
-                                      const projectEmps = projectEmployees.filter(emp => emp.area_manager === areaManager);
-                                      const lineManagers = [...new Set(projectEmps.map(emp => emp.line_manager).filter(Boolean))].sort();
-                                      
+                              <>
+                                {/* Root vertical drop */}
+                                <div className={`w-0.5 ${isCompact ? 'h-8' : 'h-12'} bg-gradient-to-b from-green-500 to-indigo-500/50 z-10`}></div>
+                                
+                                {/* Area Managers Container */}
+                                <div className={`relative w-full flex justify-center ${isCompact ? 'gap-8 px-4' : 'gap-16 px-8'}`}>
+                                  {/* Direct Diagonal Lines from Center of Root to Centers of Area Managers */}
+                                  <svg className={`absolute top-[-1px] left-0 w-full ${isCompact ? 'h-8' : 'h-12'} pointer-events-none overflow-visible`}>
+                                    <defs>
+                                      <linearGradient id="line-grad-hsse-am" x1="0%" y1="0%" x2="0%" y2="100%">
+                                        <stop offset="0%" stopColor="#22c55e" />
+                                        <stop offset="100%" stopColor="#6366f1" stopOpacity="0.4" />
+                                      </linearGradient>
+                                    </defs>
+                                    {areaManagers.map((_, idx) => {
+                                      const total = areaManagers.length;
+                                      const targetX = `${((idx + 0.5) / total) * 100}%`;
                                       return (
-                                        <div key={areaManager} className="flex flex-col items-center flex-1">
-                                          {/* Area Manager Box */}
-                                          <div 
-                                            className={`w-44 p-3 rounded-2xl border-2 border-indigo-500 bg-gradient-to-br from-indigo-500/15 to-indigo-500/5 ${isDarkMode ? 'text-indigo-300 shadow-md shadow-indigo-500/20' : 'text-indigo-700 shadow-md shadow-indigo-500/10'} cursor-pointer hover:scale-105 transition-all duration-300 z-20`}
-                                            onClick={() => {
-                                              const newExpanded = new Set(expandedNodes);
-                                              if (newExpanded.has(amNodeId)) {
-                                                newExpanded.delete(amNodeId);
-                                              } else {
-                                                newExpanded.add(amNodeId);
-                                              }
-                                              setExpandedNodes(newExpanded);
-                                            }}
-                                            onDoubleClick={() => setEditingNode({ type: 'am', name: String(areaManager) })}
-                                          >
-                                            <div className="flex flex-col items-center text-center">
-                                              <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-2 text-white font-bold shadow-md bg-gradient-to-br ${getAvatarColor(String(areaManager))}`}>
-                                                {getInitials(String(areaManager))}
-                                              </div>
-                                              {editingNode?.type === 'am' && editingNode.name === areaManager ? (
-                                                <input
-                                                  autoFocus
-                                                  defaultValue={String(areaManager)}
-                                                  onBlur={(e) => handleNodeEdit(e.target.value, 'am', String(areaManager))}
-                                                  className={`w-full text-xs font-bold text-center bg-transparent border-b-2 border-indigo-500 outline-none mb-1 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
-                                                />
-                                              ) : (
-                                                <h4 className="font-bold text-xs truncate w-full mb-0.5">{areaManager}</h4>
-                                              )}
-                                              <p className="text-[9px] uppercase tracking-wide opacity-70 font-bold">Area Manager</p>
-                                            </div>
-                                          </div>
-                                          
-                                          {expandedNodes.has(amNodeId) && (
-                                            <>
-                                              {/* AM vertical drop */}
-                                              <div className="w-0.5 h-10 bg-gradient-to-b from-indigo-500 to-emerald-500/50 z-10"></div>
-                                              
-                                              {/* Line Managers Container */}
-                                              <div className="relative w-full flex justify-center gap-8 px-4">
-                                                {/* Direct Diagonal Lines from AM to Line Managers */}
-                                                <svg className="absolute top-[-1px] left-0 w-full h-10 pointer-events-none overflow-visible">
-                                                  {lineManagers.map((_, idx) => {
-                                                    const total = lineManagers.length;
-                                                    const targetX = `${((idx + 0.5) / total) * 100}%`;
-                                                    return (
-                                                      <line key={idx} x1="50%" y1="0" x2={targetX} y2="40" stroke="#10b981" strokeWidth="2" opacity="0.3" strokeDasharray="2 1" />
-                                                    );
-                                                  })}
-                                                </svg>
-                                                
-                                                {lineManagers.map((lineManager) => {
-                                                  const lmNodeId = `lm-${areaManager}-${lineManager}`;
-                                                  const lmEmployees = projectEmps.filter(emp => emp.line_manager === lineManager);
-                                                  
-                                                  return (
-                                                    <div key={lineManager} className="flex flex-col items-center flex-1">
-                                                      {/* Line Manager Box */}
-                                                      <div
-                                                        className={`w-36 p-3 rounded-2xl border-2 border-emerald-500 bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 ${isDarkMode ? 'text-emerald-300 shadow-md shadow-emerald-500/20' : 'text-emerald-700 shadow-md shadow-emerald-500/10'} cursor-pointer hover:scale-105 transition-all duration-300 z-20 ${draggedEmployee ? 'ring-2 ring-dashed ring-emerald-400' : ''}`}
-                                                        onClick={() => {
-                                                          const newExpanded = new Set(expandedNodes);
-                                                          if (newExpanded.has(lmNodeId)) {
-                                                            newExpanded.delete(lmNodeId);
-                                                          } else {
-                                                            newExpanded.add(lmNodeId);
-                                                          }
-                                                          setExpandedNodes(newExpanded);
-                                                        }}
-                                                        onDragOver={(e) => e.preventDefault()}
-                                                        onDrop={async (e) => {
-                                                          e.preventDefault();
-                                                          if (draggedEmployee) {
-                                                            try {
-                                                              const docRef = doc(db, 'hse_employees', String(draggedEmployee.employee_no));
-                                                              await updateDoc(docRef, { line_manager: lineManager, area_manager: areaManager });
-                                                              setAllEmployees(prev => prev.map(emp => emp.employee_no === draggedEmployee.employee_no ? { ...emp, line_manager: lineManager, area_manager: areaManager } : emp));
-                                                              setDraggedEmployee(null);
-                                                            } catch (error) {
-                                                              console.error('Error updating employee:', error);
-                                                            }
-                                                          }
-                                                        }}
-                                                      >
-                                                        <div className="flex flex-col items-center text-center">
-                                                          <div className={`w-11 h-11 rounded-full flex items-center justify-center mb-2 text-white font-bold text-xs shadow-sm bg-gradient-to-br ${getAvatarColor(String(lineManager))}`}>
-                                                            {getInitials(String(lineManager))}
-                                                          </div>
-                                                          <h4 className="font-bold text-[10px] truncate w-full mb-0.5">{lineManager}</h4>
-                                                          <p className="text-[8px] uppercase tracking-wide opacity-70 font-bold">Line Manager</p>
-                                                          <div className={`mt-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold ${isDarkMode ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600'}`}>
-                                                            {lmEmployees.length} Emp
-                                                          </div>
-                                                        </div>
-                                                      </div>
-                                                      
-                                                      {expandedNodes.has(lmNodeId) && (
-                                                        <>
-                                                          {/* LM vertical drop */}
-                                                          <div className="w-0.5 h-6 bg-gradient-to-b from-emerald-500 to-slate-400/30 z-10"></div>
-                                                          
-                                                          {/* Employees List */}
-                                                          <div className="flex flex-col gap-1.5 w-full max-w-[150px]">
-                                                            {lmEmployees.map(employee => (
-                                                              <div
-                                                                key={employee.employee_no}
-                                                                draggable
-                                                                onClick={() => setAssignmentModal({ isOpen: true, employee })}
-                                                                onDragStart={() => setDraggedEmployee(employee)}
-                                                                onDragEnd={() => setDraggedEmployee(null)}
-                                                                className={`p-2 rounded-xl border border-dashed ${isDarkMode ? 'border-slate-700 bg-slate-800/50 hover:bg-slate-800' : 'border-slate-200 bg-white hover:bg-slate-50'} cursor-pointer transition-all flex items-center gap-2 group relative ${draggedEmployee?.employee_no === employee.employee_no ? 'opacity-50 grayscale' : ''}`}
-                                                              >
-                                                                <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold text-[9px] ${getAvatarColor(String(employee.employee_name))}`}>
-                                                                  {getInitials(String(employee.employee_name))}
-                                                                </div>
-                                                                <div className="flex-1 min-w-0">
-                                                                  <h4 className="font-bold text-[9px] truncate tracking-tight">{employee.employee_name}</h4>
-                                                                  <p className="text-[7px] opacity-60 truncate uppercase font-bold">{employee.designation || 'HSE'}</p>
-                                                                </div>
-                                                                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                  <Settings className="w-3 h-3 text-indigo-500" />
-                                                                </div>
-                                                              </div>
-                                                            ))}
-                                                          </div>
-                                                        </>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                })}
-                                              </div>
-                                            </>
-                                          )}
-                                        </div>
+                                        <line key={idx} x1="50%" y1="0" x2={targetX} y2={isCompact ? "32" : "48"} stroke="url(#line-grad-hsse-am)" strokeWidth="2.5" strokeDasharray="4 2" />
                                       );
                                     })}
-                                  </div>
-                                </>
-                              )}
+                                  </svg>
+                                  
+                                  {areaManagers.map((areaManager) => {
+                                    const projectEmps = projectEmployees.filter(emp => emp.area_manager === areaManager);
+                                    const lineManagers = [...new Set(projectEmps.map(emp => emp.line_manager).filter(Boolean))].sort();
+                                    
+                                    return (
+                                      <div key={areaManager} className="flex flex-col items-center flex-1">
+                                        {/* Area Manager Box */}
+                                        <div 
+                                          className={`${isCompact ? 'w-36' : 'w-44'} p-3 rounded-2xl border-2 border-indigo-500 bg-gradient-to-br from-indigo-500/15 to-indigo-500/5 ${isDarkMode ? 'text-indigo-300 shadow-md shadow-indigo-500/20' : 'text-indigo-700 shadow-md shadow-indigo-500/10'} cursor-default transition-all duration-300 z-20`}
+                                          onDoubleClick={() => setEditingNode({ type: 'am', name: String(areaManager) })}
+                                        >
+                                          <div className="flex flex-col items-center text-center">
+                                            <div className={`${isCompact ? 'w-10 h-10' : 'w-14 h-14'} rounded-full flex items-center justify-center mb-2 text-white font-bold shadow-md bg-gradient-to-br ${getAvatarColor(String(areaManager))}`}>
+                                              {getInitials(String(areaManager))}
+                                            </div>
+                                            {editingNode?.type === 'am' && editingNode.name === areaManager ? (
+                                              <input
+                                                autoFocus
+                                                defaultValue={String(areaManager)}
+                                                onBlur={(e) => handleNodeEdit(e.target.value, 'am', String(areaManager))}
+                                                className={`w-full text-[10px] font-bold text-center bg-transparent border-b-2 border-indigo-500 outline-none mb-1 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
+                                              />
+                                            ) : (
+                                              <h4 className={`font-bold ${isCompact ? 'text-[10px]' : 'text-xs'} truncate w-full mb-0.5`}>{areaManager}</h4>
+                                            )}
+                                            <p className="text-[8px] uppercase tracking-wide opacity-70 font-bold">Area Manager</p>
+                                          </div>
+                                        </div>
+                                        
+                                        <>
+                                          {/* AM vertical drop */}
+                                          <div className="w-0.5 h-8 bg-gradient-to-b from-indigo-500 to-emerald-500/50 z-10"></div>
+                                          
+                                          {/* Line Managers Container */}
+                                          <div className={`relative w-full flex justify-center ${isCompact ? 'gap-4 px-2' : 'gap-8 px-4'}`}>
+                                            {/* Direct Diagonal Lines from AM to Line Managers */}
+                                            <svg className="absolute top-[-1px] left-0 w-full h-8 pointer-events-none overflow-visible">
+                                              {lineManagers.map((_, idx) => {
+                                                const total = lineManagers.length;
+                                                const targetX = `${((idx + 0.5) / total) * 100}%`;
+                                                return (
+                                                  <line key={idx} x1="50%" y1="0" x2={targetX} y2="32" stroke="#10b981" strokeWidth="2" opacity="0.3" strokeDasharray="2 1" />
+                                                );
+                                              })}
+                                            </svg>
+                                            
+                                            {lineManagers.map((lineManager) => {
+                                              const lmEmployees = projectEmps.filter(emp => emp.line_manager === lineManager);
+                                              
+                                              return (
+                                                <div key={lineManager} className="flex flex-col items-center flex-1">
+                                                  {/* Line Manager Box */}
+                                                  <div
+                                                    className={`${isCompact ? 'w-28' : 'w-36'} p-2 rounded-2xl border-2 border-emerald-500 bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 ${isDarkMode ? 'text-emerald-300 shadow-md shadow-emerald-500/20' : 'text-emerald-700 shadow-md shadow-emerald-500/10'} cursor-default transition-all duration-300 z-20 ${draggedEmployee ? 'ring-2 ring-dashed ring-emerald-400' : ''}`}
+                                                    onDragOver={(e) => e.preventDefault()}
+                                                    onDrop={async (e) => {
+                                                      e.preventDefault();
+                                                      if (draggedEmployee) {
+                                                        try {
+                                                          const docRef = doc(db, 'hse_employees', String(draggedEmployee.employee_no));
+                                                          await updateDoc(docRef, { line_manager: lineManager, area_manager: areaManager });
+                                                          setAllEmployees(prev => prev.map(emp => emp.employee_no === draggedEmployee.employee_no ? { ...emp, line_manager: lineManager, area_manager: areaManager } : emp));
+                                                          setDraggedEmployee(null);
+                                                        } catch (error) {
+                                                          console.error('Error updating employee:', error);
+                                                        }
+                                                      }
+                                                    }}
+                                                  >
+                                                    <div className="flex flex-col items-center text-center">
+                                                      <div className={`${isCompact ? 'w-8 h-8 text-[10px]' : 'w-11 h-11 text-xs'} rounded-full flex items-center justify-center mb-1 text-white font-bold shadow-sm bg-gradient-to-br ${getAvatarColor(String(lineManager))}`}>
+                                                        {getInitials(String(lineManager))}
+                                                      </div>
+                                                      <h4 className={`font-bold ${isCompact ? 'text-[9px]' : 'text-[10px]'} truncate w-full mb-0.5`}>{lineManager}</h4>
+                                                      <p className="text-[7px] uppercase tracking-wide opacity-70 font-bold">Line Manager</p>
+                                                      <div className={`mt-0.5 px-1.5 py-0.5 rounded-full text-[7px] font-bold ${isDarkMode ? 'bg-emerald-500/20 text-emerald-300' : 'bg-emerald-50 text-emerald-600'}`}>
+                                                        {lmEmployees.length} Emp
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                  
+                                                  <>
+                                                    {/* LM vertical drop */}
+                                                    <div className="w-0.5 h-4 bg-gradient-to-b from-emerald-500 to-slate-400/30 z-10"></div>
+                                                    
+                                                    {/* Employees List */}
+                                                    <div className={`flex flex-col gap-1 w-full ${isCompact ? 'max-w-[100px]' : 'max-w-[150px]'}`}>
+                                                      {lmEmployees.map(employee => (
+                                                        <div
+                                                          key={employee.employee_no}
+                                                          draggable
+                                                          onClick={() => setAssignmentModal({ isOpen: true, employee })}
+                                                          onDragStart={() => setDraggedEmployee(employee)}
+                                                          onDragEnd={() => setDraggedEmployee(null)}
+                                                          className={`p-1.5 rounded-xl border border-dashed ${isDarkMode ? 'border-slate-700 bg-slate-800/50 hover:bg-slate-800' : 'border-slate-200 bg-white hover:bg-slate-50'} cursor-pointer transition-all flex items-center gap-1.5 group relative ${draggedEmployee?.employee_no === employee.employee_no ? 'opacity-50 grayscale' : ''}`}
+                                                        >
+                                                          <div className={`${isCompact ? 'w-5 h-5 text-[7px]' : 'w-7 h-7 text-[9px]'} rounded-full flex-shrink-0 flex items-center justify-center text-white font-bold ${getAvatarColor(String(employee.employee_name))}`}>
+                                                            {getInitials(String(employee.employee_name))}
+                                                          </div>
+                                                          <div className="flex-1 min-w-0">
+                                                            <h4 className={`font-bold ${isCompact ? 'text-[8px]' : 'text-[9px]'} truncate tracking-tight`}>{employee.employee_name}</h4>
+                                                            {!isCompact && <p className="text-[7px] opacity-60 truncate uppercase font-bold">{employee.designation || 'HSE'}</p>}
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </>
                             </div>
                           </div>
                         </div>
@@ -2517,6 +2752,85 @@ export default function App() {
                       ) : null}
                     </div>
 
+                    {/* Task Management Section */}
+                    <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-primary-900/30' : 'bg-primary-100'}`}>
+                                    <ListTodo className="w-5 h-5 text-primary-600" />
+                                </div>
+                                <div>
+                                    <h3 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Project Task Library</h3>
+                                    <p className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Define master tasks that can be assigned to HSE personnel</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    setEditingTask({ project: selectedProjects[0] || projects[0] });
+                                    setShowTaskForm(true);
+                                }}
+                                className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-primary-700 transition-colors shadow-sm"
+                            >
+                                <Plus className="w-4 h-4" /> New Task
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {projectTasks.length > 0 ? (
+                                projectTasks.map(task => (
+                                    <div key={task.id} className={`p-4 rounded-xl border group transition-all hover:shadow-lg ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-primary-500/50' : 'bg-white border-slate-100 hover:border-primary-200 shadow-sm'}`}>
+                                        <div className="flex items-start justify-between mb-3">
+                                            <span className={`text-[8px] font-bold px-2 py-0.5 rounded uppercase ${
+                                                task.priority === 'High' ? 'bg-accent-100 text-accent-700' : 
+                                                task.priority === 'Medium' ? 'bg-warning-100 text-warning-700' : 'bg-success-100 text-success-700'
+                                            }`}>
+                                                {task.priority} Priority
+                                            </span>
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button 
+                                                    onClick={() => {
+                                                        setEditingTask(task);
+                                                        setShowTaskForm(true);
+                                                    }}
+                                                    className="p-1 px-1.5 rounded bg-slate-100 hover:bg-primary-100 text-slate-500 hover:text-primary-600 transition-colors"
+                                                >
+                                                    <Edit2 className="w-3 h-3" />
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeleteTask(task.id)}
+                                                    className="p-1 px-1.5 rounded bg-slate-100 hover:bg-accent-100 text-slate-500 hover:text-accent-600 transition-colors"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <h4 className={`text-sm font-bold mb-1 truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{task.title}</h4>
+                                        <p className={`text-xs mb-3 line-clamp-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{task.description}</p>
+                                        
+                                        <div className="flex items-center justify-between pt-3 border-t border-slate-100 mt-auto">
+                                            <div className="flex items-center gap-1.5">
+                                                <div className={`w-1.5 h-1.5 rounded-full ${
+                                                    task.status === 'Completed' ? 'bg-success-500' : 
+                                                    task.status === 'In Progress' ? 'bg-primary-500' : 'bg-slate-300'
+                                                }`} />
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                                                    {task.status}
+                                                </span>
+                                            </div>
+                                            <div className={`text-[10px] font-medium px-2 py-0.5 rounded ${isDarkMode ? 'bg-dark-bg-tertiary text-dark-text-muted' : 'bg-slate-50 text-slate-500'}`}>
+                                                {task.project}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="col-span-full py-12 text-center text-slate-400 text-xs italic">
+                                    No tasks defined in the library yet.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                     {/* Data Management - Excel Import */}
                     <div className={`p-6 rounded-xl border ${isDarkMode ? 'bg-slate-700/30 border-slate-600' : 'bg-indigo-50/30 border-indigo-100'}`}>
                         <div className="flex items-center justify-between mb-6">
@@ -2829,6 +3143,127 @@ export default function App() {
                 </motion.div>
               </div>
             )}
+
+            {/* Task Form Modal */}
+            {showTaskForm && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  className={`rounded-2xl p-6 max-w-lg w-full shadow-2xl relative ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${isDarkMode ? 'bg-primary-900/50 text-primary-400' : 'bg-primary-50 text-primary-600'}`}>
+                        <ListTodo className="w-5 h-5" />
+                      </div>
+                      <h3 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                        {editingTask?.id ? 'Edit Project Task' : 'New Project Task'}
+                      </h3>
+                    </div>
+                    <button 
+                      onClick={() => { setShowTaskForm(false); setEditingTask(null); }}
+                      className={`transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveTask} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Task Title</label>
+                      <input
+                        type="text"
+                        required
+                        className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                        value={editingTask?.title || ''}
+                        onChange={e => setEditingTask(prev => ({ ...(prev as any), title: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Description</label>
+                      <textarea
+                        rows={3}
+                        className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                        value={editingTask?.description || ''}
+                        onChange={e => setEditingTask(prev => ({ ...(prev as any), description: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Project Scope</label>
+                        <select
+                          required
+                          className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                          value={editingTask?.project || ''}
+                          onChange={e => setEditingTask(prev => ({ ...(prev as any), project: e.target.value }))}
+                        >
+                          <option value="">Select Project</option>
+                          {projects.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Priority</label>
+                        <select
+                          className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                          value={editingTask?.priority || 'Medium'}
+                          onChange={e => setEditingTask(prev => ({ ...(prev as any), priority: e.target.value as any }))}
+                        >
+                          <option value="Low">Low</option>
+                          <option value="Medium">Medium</option>
+                          <option value="High">High</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Status</label>
+                        <select
+                          className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                          value={editingTask?.status || 'Pending'}
+                          onChange={e => setEditingTask(prev => ({ ...(prev as any), status: e.target.value as any }))}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="In Progress">In Progress</option>
+                          <option value="Completed">Completed</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Due Date</label>
+                        <input
+                          type="date"
+                          className={`w-full px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-slate-50 border border-slate-200'}`}
+                          value={editingTask?.dueDate || ''}
+                          onChange={e => setEditingTask(prev => ({ ...(prev as any), dueDate: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-4 flex justify-end gap-3 border-t">
+                      <button 
+                        type="button" 
+                        onClick={() => { setShowTaskForm(false); setEditingTask(null); }}
+                        className={`px-6 py-2 text-xs font-bold transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-300' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit"
+                        disabled={formLoading}
+                        className="px-8 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {formLoading && <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
+                        Save Task
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
           </AnimatePresence>
         </div>
       </main>
@@ -3033,6 +3468,84 @@ export default function App() {
                       <p className="text-sm"><span className={`font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Line Manager:</span> <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{selectedEmployee.line_manager}</span></p>
                       <p className="text-sm"><span className={`font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Area Manager:</span> <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{selectedEmployee.area_manager}</span></p>
                       <p className="text-sm"><span className={`font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>KPI Score:</span> <span className="font-bold text-indigo-600">{selectedEmployee.kpi}%</span></p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Task Assignments Board */}
+              <div className={`mt-8 p-6 rounded-2xl border ${isDarkMode ? 'bg-dark-bg-tertiary/30 border-border-dark' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-success-500" />
+                    <h4 className={`font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Current Task Assignments</h4>
+                  </div>
+                  <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-primary-900/40 text-primary-300' : 'bg-primary-50 text-primary-600'}`}>
+                    {selectedEmployee.tasks?.length || 0} Active Tasks
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Assigned Tasks */}
+                  <div className="space-y-3">
+                    <h5 className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Assigned to This Employee</h5>
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2">
+                      {selectedEmployee.tasks && selectedEmployee.tasks.length > 0 ? (
+                        projectTasks.filter(t => selectedEmployee.tasks?.includes(t.id)).map(task => (
+                          <div key={task.id} className={`p-3 rounded-xl border flex items-center justify-between group transition-all hover:shadow-md ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-sm'}`}>
+                            <div className="min-w-0 flex-1">
+                              <h6 className={`text-xs font-bold truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{task.title}</h6>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                                  task.priority === 'High' ? 'bg-accent-100 text-accent-700' : 
+                                  task.priority === 'Medium' ? 'bg-warning-100 text-warning-700' : 'bg-success-100 text-success-700'
+                                }`}>
+                                  {task.priority}
+                                </span>
+                                <span className="text-[9px] text-slate-500 truncate">{task.status}</span>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={() => handleUnassignTask(String(selectedEmployee.employee_no), task.id)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-accent-500 hover:bg-accent-50 transition-all opacity-0 group-hover:opacity-100"
+                              title="Unassign Task"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className={`p-8 text-center border-2 border-dashed rounded-xl ${isDarkMode ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
+                          <p className="text-xs italic">No tasks assigned yet</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Available Tasks in Project */}
+                  <div className="space-y-3">
+                    <h5 className={`text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Available in {selectedEmployee.project}</h5>
+                    <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2">
+                       {projectTasks.filter(t => t.project === selectedEmployee.project && !selectedEmployee.tasks?.includes(t.id)).length > 0 ? (
+                         projectTasks.filter(t => t.project === selectedEmployee.project && !selectedEmployee.tasks?.includes(t.id)).map(task => (
+                          <div key={task.id} className={`p-3 rounded-xl border flex items-center justify-between group transition-all hover:bg-primary-50/10 ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-primary-500/50' : 'bg-white border-slate-100 shadow-sm hover:border-primary-200'}`}>
+                            <div className="min-w-0 flex-1">
+                              <h6 className={`text-xs font-bold truncate ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{task.title}</h6>
+                              <p className={`text-[9px] truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{task.description}</p>
+                            </div>
+                            <button 
+                              onClick={() => handleAssignTask(String(selectedEmployee.employee_no), task.id)}
+                              className={`p-1.5 rounded-lg transition-all ${isDarkMode ? 'bg-primary-900/30 text-primary-400 hover:bg-primary-900/50' : 'bg-primary-50 text-primary-600 hover:bg-primary-100'}`}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                         ))
+                       ) : (
+                        <div className={`p-8 text-center border-2 border-dashed rounded-xl ${isDarkMode ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
+                          <p className="text-xs italic">No more available tasks</p>
+                        </div>
+                       )}
                     </div>
                   </div>
                 </div>
